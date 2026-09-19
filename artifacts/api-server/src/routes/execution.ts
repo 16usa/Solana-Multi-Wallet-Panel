@@ -14,6 +14,7 @@ import {
   executeSellPercent,
   walletSolBalance,
   withdrawSol,
+  walletDeletionState,
 } from "../lib/execution-engine";
 
 const router: IRouter = Router();
@@ -222,6 +223,13 @@ router.post("/execution/strategy", async (req, res): Promise<void> => {
   const wallet = await findWallet(address);
   if (!wallet) {
     res.status(404).json({ error: "Execution wallet not found" });
+    return;
+  }
+
+  if (enabled && !wallet.enabled) {
+    res.status(409).json({
+      error: "Enable the execution wallet before enabling AUTO",
+    });
     return;
   }
 
@@ -440,7 +448,7 @@ router.post("/execution/withdraw", async (req, res): Promise<void> => {
   }
 
   const wallet = await findWallet(address);
-  if (!wallet || !wallet.enabled) {
+  if (!wallet) {
     res.status(404).json({ error: "Execution wallet not found" });
     return;
   }
@@ -569,5 +577,142 @@ router.post("/execution/withdraw-all", async (req, res): Promise<void> => {
 
   res.json({ results });
 });
+
+
+router.post("/execution/wallet-state", async (req, res): Promise<void> => {
+  const { address, enabled } = req.body ?? {};
+
+  if (
+    typeof address !== "string" ||
+    typeof enabled !== "boolean"
+  ) {
+    res.status(400).json({ error: "Invalid wallet state request" });
+    return;
+  }
+
+  try {
+    new PublicKey(address);
+  } catch {
+    res.status(400).json({ error: "Invalid Solana address" });
+    return;
+  }
+
+  const wallet = await findWallet(address);
+  if (!wallet) {
+    res.status(404).json({ error: "Execution wallet not found" });
+    return;
+  }
+
+  await db
+    .update(executionWalletsTable)
+    .set({ enabled })
+    .where(eq(executionWalletsTable.id, wallet.id));
+
+  if (!enabled) {
+    await db
+      .update(executionStrategiesTable)
+      .set({
+        enabled: false,
+        state: "idle",
+        updatedAt: new Date(),
+      })
+      .where(eq(executionStrategiesTable.walletId, wallet.id));
+  }
+
+  res.json({
+    status: "success",
+    address,
+    enabled,
+  });
+});
+
+router.delete(
+  "/execution/wallets/:address",
+  async (req, res): Promise<void> => {
+    const address = req.params.address;
+    const { confirmAddress } = req.body ?? {};
+
+    if (
+      typeof address !== "string" ||
+      typeof confirmAddress !== "string" ||
+      confirmAddress !== address
+    ) {
+      res.status(400).json({
+        error: "Wallet delete confirmation does not match",
+      });
+      return;
+    }
+
+    try {
+      new PublicKey(address);
+    } catch {
+      res.status(400).json({ error: "Invalid Solana address" });
+      return;
+    }
+
+    const wallet = await findWallet(address);
+    if (!wallet) {
+      res.status(404).json({ error: "Execution wallet not found" });
+      return;
+    }
+
+    if (wallet.enabled) {
+      res.status(409).json({
+        error: "Disable the wallet before deleting it",
+      });
+      return;
+    }
+
+    const activeStrategies = await db
+      .select({ id: executionStrategiesTable.id })
+      .from(executionStrategiesTable)
+      .where(
+        and(
+          eq(executionStrategiesTable.walletId, wallet.id),
+          eq(executionStrategiesTable.enabled, true),
+        ),
+      )
+      .limit(1);
+
+    if (activeStrategies.length) {
+      res.status(409).json({
+        error: "Disable AUTO before deleting this wallet",
+      });
+      return;
+    }
+
+    const state = await walletDeletionState(address);
+
+    if (state.positiveTokenAccounts > 0) {
+      res.status(409).json({
+        error:
+          "Wallet still contains SPL tokens. Sell or transfer them before deleting.",
+        positiveTokenAccounts: state.positiveTokenAccounts,
+      });
+      return;
+    }
+
+    const maxDeleteDustLamports = 10000;
+
+    if (state.lamports > maxDeleteDustLamports) {
+      res.status(409).json({
+        error:
+          "Wallet still contains SOL. Withdraw it before deleting.",
+        balanceSol: state.lamports / 1_000_000_000,
+      });
+      return;
+    }
+
+    await db
+      .delete(executionWalletsTable)
+      .where(eq(executionWalletsTable.id, wallet.id));
+
+    res.json({
+      status: "deleted",
+      address,
+      abandonedDustLamports: state.lamports,
+    });
+  },
+);
 
 export default router;

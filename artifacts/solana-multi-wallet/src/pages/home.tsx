@@ -382,6 +382,75 @@ export default function Home() {
     }
   }
 
+
+  async function setWalletEnabled(wallet: WalletRow, enabled: boolean) {
+    if (!enabled) {
+      const confirmed = window.confirm(
+        `Disable ${short(wallet.address)}? Trading and AUTO will stop for this wallet.`,
+      );
+      if (!confirmed) return;
+    }
+
+    setBusy(`${wallet.address}:state`);
+    setNotice('');
+
+    try {
+      await api('/api/execution/wallet-state', {
+        method: 'POST',
+        body: JSON.stringify({
+          address: wallet.address,
+          enabled,
+        }),
+      });
+
+      setNotice(
+        `${short(wallet.address)} · ${enabled ? 'enabled' : 'disabled'}`,
+      );
+      closeFunds();
+      await refresh();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function deleteWallet(wallet: WalletRow) {
+    if (wallet.enabled) {
+      setNotice('Disable the wallet before deleting it.');
+      return;
+    }
+
+    const typed = window.prompt(
+      `Permanent delete ${short(wallet.address)}. Type DELETE to confirm.`,
+    );
+
+    if (typed !== 'DELETE') return;
+
+    setBusy(`${wallet.address}:delete`);
+    setNotice('');
+
+    try {
+      await api(
+        `/api/execution/wallets/${encodeURIComponent(wallet.address)}`,
+        {
+          method: 'DELETE',
+          body: JSON.stringify({
+            confirmAddress: wallet.address,
+          }),
+        },
+      );
+
+      setNotice(`Wallet deleted · ${short(wallet.address)}`);
+      closeFunds();
+      await refresh();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy('');
+    }
+  }
+
   async function validate() {
     const value = mint.trim();
     if (!value) return;
@@ -646,7 +715,10 @@ export default function Home() {
                 };
 
               return (
-                <div className="wallet-row" key={wallet.id}>
+                <div
+                  className={`wallet-row ${wallet.enabled ? '' : 'disabled'}`}
+                  key={wallet.id}
+                >
                   <div className="wallet-line">
                     <span className="index">
                       {String(index + 1).padStart(2, '0')}
@@ -687,7 +759,9 @@ export default function Home() {
                         •••
                       </button>
 
-                      <span className="managed">24/7</span>
+                      <span className={`managed ${wallet.enabled ? '' : 'off'}`}>
+                        {wallet.enabled ? '24/7' : 'OFF'}
+                      </span>
                     </div>
                   </div>
 
@@ -696,7 +770,7 @@ export default function Home() {
                     <button
                       className="buy"
                       onClick={() => trade(wallet.address, 'buy')}
-                      disabled={Boolean(busy)}
+                      disabled={Boolean(busy) || !wallet.enabled}
                     >
                       BUY
                     </button>
@@ -704,7 +778,7 @@ export default function Home() {
                     <button
                       className="sell"
                       onClick={() => trade(wallet.address, 'sell')}
-                      disabled={Boolean(busy)}
+                      disabled={Boolean(busy) || !wallet.enabled}
                     >
                       SELL
                     </button>
@@ -721,7 +795,7 @@ export default function Home() {
                           !wallet.strategy?.enabled,
                         )
                       }
-                      disabled={Boolean(busy)}
+                      disabled={Boolean(busy) || !wallet.enabled}
                     >
                       AUTO {wallet.strategy?.enabled ? 'ON' : 'OFF'}
                     </button>
@@ -1013,6 +1087,37 @@ export default function Home() {
                   >
                     VIEW TRANSACTIONS
                   </button>
+
+                  <div className="wallet-admin">
+                    <button
+                      className="sheet-secondary"
+                      onClick={() =>
+                        setWalletEnabled(menuWallet, !menuWallet.enabled)
+                      }
+                      disabled={busy === `${menuWallet.address}:state`}
+                    >
+                      {menuWallet.enabled
+                        ? 'DISABLE WALLET'
+                        : 'ENABLE WALLET'}
+                    </button>
+
+                    <button
+                      className="sheet-danger"
+                      onClick={() => deleteWallet(menuWallet)}
+                      disabled={
+                        menuWallet.enabled ||
+                        busy === `${menuWallet.address}:delete`
+                      }
+                    >
+                      DELETE WALLET
+                    </button>
+                  </div>
+
+                  <p className="delete-note">
+                    Permanent delete is allowed only after the wallet is
+                    disabled, AUTO is off, token balances are zero, and only
+                    network-fee dust remains.
+                  </p>
                 </>
               ) : (
                 <>

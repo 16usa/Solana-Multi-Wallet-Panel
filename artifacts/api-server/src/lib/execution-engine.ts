@@ -498,3 +498,54 @@ export async function withdrawSol(
     amountSol: lamports / LAMPORTS_PER_SOL,
   };
 }
+
+
+const SPL_TOKEN_PROGRAM_ID = new PublicKey(
+  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+);
+const TOKEN_2022_PROGRAM_ID = new PublicKey(
+  "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+);
+
+export async function walletDeletionState(address: string): Promise<{
+  lamports: number;
+  positiveTokenAccounts: number;
+}> {
+  const owner = new PublicKey(address);
+
+  const lamports = await executionConnection.getBalance(
+    owner,
+    "confirmed",
+  );
+
+  let positiveTokenAccounts = 0;
+
+  for (const programId of [
+    SPL_TOKEN_PROGRAM_ID,
+    TOKEN_2022_PROGRAM_ID,
+  ]) {
+    const accounts =
+      await executionConnection.getParsedTokenAccountsByOwner(
+        owner,
+        { programId },
+        "confirmed",
+      );
+
+    for (const item of accounts.value) {
+      const data = asRecord(item.account.data);
+      const parsed = asRecord(data.parsed);
+      const info = asRecord(parsed.info);
+      const tokenAmount = asRecord(info.tokenAmount);
+      const amount = stringValue(tokenAmount.amount);
+
+      if (amount && /^\d+$/.test(amount) && BigInt(amount) > 0n) {
+        positiveTokenAccounts += 1;
+      }
+    }
+  }
+
+  return {
+    lamports,
+    positiveTokenAccounts,
+  };
+}

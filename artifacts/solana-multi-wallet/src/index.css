@@ -188,3 +188,40 @@ button:disabled { opacity:.35; cursor:default; }
   font-size:8px;
   line-height:1.35;
 }
+
+
+.wallet-row.disabled .trade-row,
+.wallet-row.disabled .strategy-row,
+.wallet-row.disabled .status-row {
+  opacity:.48;
+}
+.managed.off {
+  border-color:#cfcfcf;
+  color:#888;
+}
+.wallet-admin {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:8px;
+}
+.sheet-danger {
+  width:100%;
+  height:42px;
+  border-radius:9px;
+  margin-top:12px;
+  border:1px solid #b7b7b7;
+  background:#fff;
+  color:#555;
+  font-size:9px;
+  font-weight:750;
+  letter-spacing:.05em;
+}
+.sheet-danger:disabled {
+  opacity:.32;
+}
+.delete-note {
+  margin:8px 0 0;
+  color:#999;
+  font-size:8px;
+  line-height:1.35;
+}
