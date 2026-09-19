@@ -3,6 +3,7 @@ import { validateMint } from '@workspace/api-client-react';
 
 const WITHDRAWAL_STORAGE_KEY = 'multi-wallet:withdrawal-address:v1';
 const THEME_STORAGE_KEY = 'multi-wallet:theme:v1';
+const TRADE_DRAFTS_STORAGE_KEY = 'multi-wallet:trade-drafts:v1';
 
 type Strategy = {
   enabled: boolean;
@@ -51,6 +52,17 @@ export default function Home() {
 
   const [buyAmount, setBuyAmount] = useState('0.01');
   const [sellPct, setSellPct] = useState('100');
+
+  const [tradeDrafts, setTradeDrafts] = useState<
+    Record<string, { buyAmount: string; sellPct: string }>
+  >(() => {
+    try {
+      const saved = localStorage.getItem(TRADE_DRAFTS_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
 
   const [tpPct, setTpPct] = useState('100');
   const [tpSellPct, setTpSellPct] = useState('50');
@@ -145,6 +157,13 @@ export default function Home() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      TRADE_DRAFTS_STORAGE_KEY,
+      JSON.stringify(tradeDrafts),
+    );
+  }, [tradeDrafts]);
 
   useEffect(() => {
     if (!unlocked) return;
@@ -480,12 +499,62 @@ export default function Home() {
     }
   }
 
+  function changeTradeDraft(
+    address: string,
+    key: 'buyAmount' | 'sellPct',
+    value: string,
+  ) {
+    const cleaned = value.replace(/[^0-9.]/g, '');
+
+    setTradeDrafts((prev) => ({
+      ...prev,
+      [address]: {
+        buyAmount:
+          key === 'buyAmount'
+            ? cleaned
+            : prev[address]?.buyAmount ?? buyAmount,
+        sellPct:
+          key === 'sellPct'
+            ? cleaned
+            : prev[address]?.sellPct ?? sellPct,
+      },
+    }));
+  }
+
   async function trade(
     address: string,
     side: 'buy' | 'sell',
   ) {
     if (mintState.status !== 'valid') {
       setNotice('Validate the mint first.');
+      return;
+    }
+
+    const walletTrade = tradeDrafts[address] || {
+      buyAmount,
+      sellPct,
+    };
+
+    const walletBuyAmount = Number(walletTrade.buyAmount);
+    const walletSellPct = Number(walletTrade.sellPct);
+
+    if (
+      side === 'buy' &&
+      (!Number.isFinite(walletBuyAmount) || walletBuyAmount <= 0)
+    ) {
+      setNotice(`Enter a valid BUY amount for ${short(address)}.`);
+      return;
+    }
+
+    if (
+      side === 'sell' &&
+      (
+        !Number.isFinite(walletSellPct) ||
+        walletSellPct <= 0 ||
+        walletSellPct > 100
+      )
+    ) {
+      setNotice(`SELL % for ${short(address)} must be 1–100.`);
       return;
     }
 
@@ -499,8 +568,8 @@ export default function Home() {
           address,
           mint: mint.trim(),
           side,
-          amountSol: Number(buyAmount),
-          sellPct: Number(sellPct),
+          amountSol: walletBuyAmount,
+          sellPct: walletSellPct,
         }),
       });
 
@@ -762,6 +831,12 @@ export default function Home() {
                   slSellPct,
                 };
 
+              const tradeDraft =
+                tradeDrafts[wallet.address] || {
+                  buyAmount,
+                  sellPct,
+                };
+
               return (
                 <div
                   className={`wallet-row ${wallet.enabled ? '' : 'disabled'}`}
@@ -815,6 +890,23 @@ export default function Home() {
 
                   <div className="trade-row">
                     <span>BUY</span>
+
+                    <div className="trade-value">
+                      <input
+                        inputMode="decimal"
+                        value={tradeDraft.buyAmount}
+                        onChange={(event) =>
+                          changeTradeDraft(
+                            wallet.address,
+                            'buyAmount',
+                            event.target.value,
+                          )
+                        }
+                        aria-label={`Buy amount for ${wallet.address}`}
+                      />
+                      <b>SOL</b>
+                    </div>
+
                     <button
                       className="buy"
                       onClick={() => trade(wallet.address, 'buy')}
@@ -822,7 +914,25 @@ export default function Home() {
                     >
                       BUY
                     </button>
+
                     <span>SELL</span>
+
+                    <div className="trade-value">
+                      <input
+                        inputMode="decimal"
+                        value={tradeDraft.sellPct}
+                        onChange={(event) =>
+                          changeTradeDraft(
+                            wallet.address,
+                            'sellPct',
+                            event.target.value,
+                          )
+                        }
+                        aria-label={`Sell percentage for ${wallet.address}`}
+                      />
+                      <b>%</b>
+                    </div>
+
                     <button
                       className="sell"
                       onClick={() => trade(wallet.address, 'sell')}

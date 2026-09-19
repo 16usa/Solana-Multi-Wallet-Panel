@@ -391,3 +391,51 @@ html[data-theme='dark'] .sheet-handle {
 html[data-theme='dark'] .sheet-close {
   color:#aaa;
 }
+
+
+/* v6.9 per-wallet trade amounts */
+.trade-row {
+  grid-template-columns:
+    auto minmax(62px, .95fr) minmax(46px, .72fr)
+    auto minmax(54px, .82fr) minmax(46px, .72fr);
+}
+
+.trade-value {
+  min-width:0;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:3px;
+  align-items:center;
+}
+
+.trade-value input {
+  width:100%;
+  height:28px;
+  padding:0 5px;
+  text-align:right;
+  font-size:10px;
+}
+
+.trade-value b {
+  font-size:7px;
+  font-weight:600;
+  color:#777;
+}
+
+html[data-theme='dark'] .trade-value b {
+  color:#8d8d8d;
+}
+
+@media (max-width: 390px) {
+  .trade-row {
+    gap:4px;
+    grid-template-columns:
+      auto minmax(58px, .95fr) minmax(43px, .70fr)
+      auto minmax(50px, .80fr) minmax(43px, .70fr);
+  }
+
+  .trade-value input {
+    padding:0 4px;
+    font-size:9px;
+  }
+}
