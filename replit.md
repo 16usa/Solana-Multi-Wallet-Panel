@@ -1,45 +1,43 @@
-# [Project name]
+# Solana Multi Wallet Panel
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A Vite + React + Express app for monitoring public Solana wallets, validating SPL token mints, and preparing wallet-signed swaps without storing private keys.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `pnpm --filter @workspace/solana-multi-wallet run dev` — run the React frontend through its managed workflow
+- `pnpm --filter @workspace/api-server run dev` — run the Express API through its managed workflow
+- `pnpm --filter @workspace/solana-multi-wallet run typecheck` — check the frontend
+- `pnpm --filter @workspace/api-server run typecheck` — check the backend
+- `pnpm --filter @workspace/api-spec run codegen` — regenerate API clients after contract changes
+- Optional env: `SOLANA_RPC_URL` — custom mainnet RPC; defaults to Solana's public mainnet endpoint
+- Optional env: `JUPITER_API_KEY` — required only for non-Pump.fun swaps routed through Jupiter
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- pnpm workspace, Node.js 24, TypeScript
+- Frontend: Vite, React, Solana wallet adapter
+- Backend: Express 5, Solana Web3.js
+- Contract: OpenAPI with generated client and Zod validation
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/solana-multi-wallet/` — frontend
+- `artifacts/api-server/src/routes/solana.ts` — Solana API routes
+- `lib/api-spec/openapi.yaml` — API contract
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Wallet addresses are stored only in browser localStorage.
+- Transaction signing remains in the connected wallet; the server never receives private keys or seed phrases.
+- Pump.fun transaction preparation is preferred for Pump mints, with Jupiter as the optional fallback.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Add and monitor public Solana wallet addresses.
+- Validate SPL token mint addresses.
+- Prepare unsigned per-wallet purchases and submit only wallet-approved signed transactions.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
-
-## Gotchas
-
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- Preserve the supplied interface without redesigning it.
+- Do not add authentication, mock trading data, private keys, seed phrases, or wallet secrets.

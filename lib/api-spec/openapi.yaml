@@ -1,22 +1,19 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
-  version: 0.1.0
-  description: API specification
+  version: 1.0.0
+  description: Solana multi-wallet panel API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
-    description: Health operations
+  - name: solana
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
-      summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,13 +21,218 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /balance:
+    get:
+      operationId: getBalance
+      tags: [solana]
+      parameters:
+        - in: query
+          name: address
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Wallet balance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Balance"
+        "400":
+          description: Invalid address
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: RPC failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /mint:
+    get:
+      operationId: validateMint
+      tags: [solana]
+      parameters:
+        - in: query
+          name: mint
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Valid SPL mint
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MintInfo"
+        "400":
+          description: Invalid mint
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Mint not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: RPC failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /order:
+    post:
+      operationId: prepareOrder
+      tags: [solana]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderInput"
+      responses:
+        "200":
+          description: Unsigned transaction
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Transaction unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Provider failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Jupiter not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /execute:
+    post:
+      operationId: executeOrder
+      tags: [solana]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecutionInput"
+      responses:
+        "200":
+          description: Execution result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutionResult"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Transaction failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Provider failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Jupiter not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     HealthStatus:
       type: object
+      required: [status, rpc, jupiterConfigured]
       properties:
-        status:
-          type: string
-      required:
-        - status
-
+        status: { type: string }
+        rpc: { type: string }
+        jupiterConfigured: { type: boolean }
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        code: { type: [integer, "null"] }
+        errorCode: { type: [string, integer, "null"] }
+        router: { type: [string, "null"] }
+        signature: { type: [string, "null"] }
+        status: { type: [string, "null"] }
+    Balance:
+      type: object
+      required: [address, lamports, sol]
+      properties:
+        address: { type: string }
+        lamports: { type: integer }
+        sol: { type: number }
+    MintInfo:
+      type: object
+      required: [mint, valid, decimals, supply, program]
+      properties:
+        mint: { type: string }
+        valid: { type: boolean }
+        decimals: { type: integer }
+        supply: { type: string }
+        program: { type: string }
+    OrderInput:
+      type: object
+      required: [wallet, outputMint, amountSol]
+      properties:
+        wallet: { type: string }
+        outputMint: { type: string }
+        amountSol: { type: number, exclusiveMinimum: 0 }
+    Order:
+      type: object
+      required: [provider, transaction]
+      properties:
+        provider: { type: string, enum: [pump, jupiter] }
+        requestId: { type: [string, "null"] }
+        transaction: { type: string }
+        outAmount: { type: [string, number, "null"] }
+        router: { type: [string, "null"] }
+        mode: { type: [string, "null"] }
+        feeBps: { type: [integer, number, "null"] }
+        feeMint: { type: [string, "null"] }
+        expireAt: { type: [string, "null"] }
+        lastValidBlockHeight: { type: [integer, number, "null"] }
+    ExecutionInput:
+      type: object
+      required: [signedTransaction, provider]
+      properties:
+        signedTransaction: { type: string }
+        requestId: { type: [string, "null"] }
+        provider: { type: string, enum: [pump, jupiter] }
+    ExecutionResult:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string }
+        signature: { type: [string, "null"] }
+        code: { type: [integer, "null"] }
+        error: { type: [string, "null"] }
