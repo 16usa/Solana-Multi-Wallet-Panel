@@ -80,3 +80,76 @@ input::placeholder { color: #a7a7a7; }
   .text-button { justify-self: end; height: 34px; }
   .wallet-adapter-button.wallet-connect { max-width: 148px; overflow: hidden; text-overflow: ellipsis; }
 }
+
+/* compact-mobile-v2 */
+@media (max-width: 640px) {
+  .page { padding: 10px 12px 18px; }
+  .topbar { padding-bottom: 10px; gap: 8px; }
+  h1 { font-size: 14px; }
+
+  .section { padding: 10px 0; }
+  .section-head { margin-bottom: 7px; font-size: 12px; }
+  label { margin-bottom: 4px; font-size: 10px; }
+
+  input {
+    height: 38px;
+    border-radius: 8px;
+    padding: 0 10px;
+    font-size: 16px;
+  }
+
+  .add-row, .field-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px;
+  }
+
+  .text-button {
+    justify-self: auto;
+    height: 38px;
+    padding: 0 2px;
+    font-size: 11px;
+  }
+
+  .wallet-list { margin-top: 4px; }
+  .empty { padding: 4px 0 0; font-size: 11px; }
+
+  .wallet-row {
+    grid-template-columns: 28px 22px minmax(0, 1fr) 66px 24px 26px;
+    min-height: 46px;
+    column-gap: 5px;
+  }
+
+  .wallet-row .unit { display: none; }
+  .wallet-row .icon-button:nth-of-type(2) { display: none; }
+  .address { font-size: 11px; }
+  .wallet-sub { font-size: 9px; }
+  .wallet-amount { width: 66px; height: 29px; }
+  .order-line { grid-column: 3 / -1; padding-bottom: 7px; }
+
+  .validation { min-height: 12px; margin-top: 3px; }
+  .amount-main { width: 138px; }
+  .amount-main input { height: 38px; font-size: 16px; }
+
+  .summary { margin-top: 7px; font-size: 10px; }
+  .notice { padding: 8px 0; }
+  .primary { height: 42px; }
+  .footnote { margin-top: 6px; font-size: 8.5px; line-height: 1.25; }
+
+  .wallet-adapter-button.wallet-connect,
+  .wallet-adapter-button-trigger {
+    max-width: 132px;
+    height: 32px !important;
+    min-height: 32px !important;
+    padding: 0 10px !important;
+    border-radius: 8px !important;
+    background: #fff !important;
+    color: #111 !important;
+    border: 1px solid #d8d8d8 !important;
+    font-size: 10px !important;
+    line-height: 30px !important;
+    box-shadow: none !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
