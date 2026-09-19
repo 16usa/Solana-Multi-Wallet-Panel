@@ -12,8 +12,35 @@ import {
 } from "@workspace/api-zod";
 
 const router: IRouter = Router();
-const rpcUrl =
-  process.env.SOLANA_RPC_URL ?? "https://api.mainnet-beta.solana.com";
+function normalizedRpcUrl(): string {
+  const fallback = "https://api.mainnet-beta.solana.com";
+  let value = (process.env.SOLANA_RPC_URL ?? "").trim();
+
+  if (value.startsWith("SOLANA_RPC_URL=")) {
+    value = value.slice("SOLANA_RPC_URL=".length).trim();
+  }
+
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+
+  if (!value) return fallback;
+
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return fallback;
+    }
+    return parsed.toString();
+  } catch {
+    return fallback;
+  }
+}
+
+const rpcUrl = normalizedRpcUrl();
 const connection = new Connection(rpcUrl, "confirmed");
 const jupiterBase = "https://api.jup.ag/swap/v2";
 const pumpSwapApi = "https://fun-block.pump.fun/agents/swap";

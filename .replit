@@ -3,8 +3,10 @@ modules = ["nodejs-24"]
 [deployment]
 router = "application"
 deploymentTarget = "reserved-vm"
-build = ["bash", "scripts/build-24x7.sh"]
-run = ["bash", "scripts/run-24x7.sh"]
+
+[deployment.postBuild]
+args = ["pnpm", "store", "prune"]
+env = { "CI" = "true" }
 
 [workflows]
 runButton = "Project"
