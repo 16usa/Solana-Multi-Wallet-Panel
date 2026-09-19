@@ -2,7 +2,7 @@ modules = ["nodejs-24"]
 
 [deployment]
 router = "application"
-deploymentTarget = "reserved-vm"
+deploymentTarget = "autoscale"
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]
