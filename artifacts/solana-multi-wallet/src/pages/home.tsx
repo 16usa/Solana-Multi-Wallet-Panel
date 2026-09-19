@@ -177,6 +177,77 @@ export default function Home() {
     }
   }
 
+  async function copyAddress(address: string) {
+    try {
+      await navigator.clipboard.writeText(address);
+      setNotice(`Address copied · ${short(address)}`);
+      return;
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = address;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+
+      const copied = document.execCommand('copy');
+      document.body.removeChild(textarea);
+
+      if (copied) {
+        setNotice(`Address copied · ${short(address)}`);
+      } else {
+        setNotice(`Could not copy automatically. Full address: ${address}`);
+      }
+    }
+  }
+
+  async function refreshWallet(address: string) {
+    setBusy(`${address}:refresh`);
+    setNotice('');
+
+    try {
+      if (mintState.status === 'valid' && mint.trim()) {
+        const data = await api(
+          `/api/execution/state?mint=${encodeURIComponent(mint.trim())}`,
+        );
+        const next = (data.wallets || []).find(
+          (wallet: WalletRow) => wallet.address === address,
+        );
+
+        if (next) {
+          setWallets((prev) =>
+            prev.map((wallet) =>
+              wallet.address === address ? next : wallet,
+            ),
+          );
+        }
+
+        setPriceSol(data.priceSol ?? null);
+        setPriceError(data.priceError || '');
+      } else {
+        const data = await api('/api/execution/wallets');
+        const next = (data.wallets || []).find(
+          (wallet: WalletRow) => wallet.address === address,
+        );
+
+        if (next) {
+          setWallets((prev) =>
+            prev.map((wallet) =>
+              wallet.address === address ? next : wallet,
+            ),
+          );
+        }
+      }
+
+      setNotice(`Balance refreshed · ${short(address)}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy('');
+    }
+  }
+
   async function validate() {
     const value = mint.trim();
     if (!value) return;
@@ -437,13 +508,35 @@ export default function Home() {
                     <span className="index">
                       {String(index + 1).padStart(2, '0')}
                     </span>
+
                     <div className="wallet-id">
                       <strong title={wallet.address}>
                         {short(wallet.address)}
                       </strong>
                       <span>{numberText(wallet.sol)} SOL</span>
                     </div>
-                    <span className="managed">24/7</span>
+
+                    <div className="wallet-tools">
+                      <button
+                        className="wallet-tool"
+                        onClick={() => copyAddress(wallet.address)}
+                        aria-label="Copy wallet address"
+                      >
+                        COPY
+                      </button>
+
+                      <button
+                        className="wallet-tool refresh"
+                        onClick={() => refreshWallet(wallet.address)}
+                        disabled={busy === `${wallet.address}:refresh`}
+                        aria-label="Refresh wallet balance"
+                        title="Refresh balance"
+                      >
+                        ↻
+                      </button>
+
+                      <span className="managed">24/7</span>
+                    </div>
                   </div>
 
                   <div className="trade-row">
