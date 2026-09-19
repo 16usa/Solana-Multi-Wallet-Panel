@@ -281,6 +281,57 @@ export async function walletSolBalance(address: string): Promise<number> {
   return lamports / LAMPORTS_PER_SOL;
 }
 
+export async function walletTokenBalance(
+  address: string,
+  mint: string,
+): Promise<number> {
+  const result =
+    await executionConnection.getParsedTokenAccountsByOwner(
+      new PublicKey(address),
+      { mint: new PublicKey(mint) },
+      "confirmed",
+    );
+
+  let total = 0;
+
+  for (const item of result.value) {
+    const data = asRecord(item.account.data);
+    const parsed = asRecord(data.parsed);
+    const info = asRecord(parsed.info);
+    const tokenAmount = asRecord(info.tokenAmount);
+
+    const uiAmountString = stringValue(
+      tokenAmount.uiAmountString,
+    );
+
+    if (uiAmountString != null) {
+      const value = Number(uiAmountString);
+      if (Number.isFinite(value)) {
+        total += value;
+        continue;
+      }
+    }
+
+    const rawAmount = stringValue(tokenAmount.amount);
+    const decimals = numberValue(tokenAmount.decimals);
+
+    if (
+      rawAmount &&
+      /^\d+$/.test(rawAmount) &&
+      decimals != null
+    ) {
+      const value =
+        Number(rawAmount) / 10 ** decimals;
+
+      if (Number.isFinite(value)) {
+        total += value;
+      }
+    }
+  }
+
+  return total;
+}
+
 export async function currentPriceSol(mint: string): Promise<number> {
   const coin = await pumpCoin(mint);
   if (coin.mint !== mint) {

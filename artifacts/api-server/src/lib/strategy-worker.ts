@@ -88,6 +88,21 @@ async function tick() {
 
         if (!trigger) continue;
 
+        const latestRows = await db
+          .select()
+          .from(executionStrategiesTable)
+          .where(eq(executionStrategiesTable.id, strategy.id))
+          .limit(1);
+
+        const latest = latestRows[0];
+
+        if (
+          !latest?.enabled ||
+          latest.state === "executing"
+        ) {
+          continue;
+        }
+
         await db
           .update(executionStrategiesTable)
           .set({

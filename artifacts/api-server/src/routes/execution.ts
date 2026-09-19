@@ -13,6 +13,7 @@ import {
   executeBuy,
   executeSellPercent,
   walletSolBalance,
+  walletTokenBalance,
   withdrawSol,
   walletDeletionState,
 } from "../lib/execution-engine";
@@ -46,6 +47,194 @@ async function findWallet(address: string) {
     .limit(1);
 
   return rows[0] ?? null;
+}
+
+async function findStrategy(walletId: string, mint: string) {
+  const rows = await db
+    .select()
+    .from(executionStrategiesTable)
+    .where(
+      and(
+        eq(executionStrategiesTable.walletId, walletId),
+        eq(executionStrategiesTable.mint, mint),
+      ),
+    )
+    .limit(1);
+
+  return rows[0] ?? null;
+}
+
+async function lockStrategyForManualTrade(
+  walletId: string,
+  mint: string,
+) {
+  const strategy = await findStrategy(walletId, mint);
+
+  if (!strategy?.enabled) {
+    return strategy;
+  }
+
+  if (strategy.state === "executing") {
+    throw new Error(
+      "AUTO is executing for this wallet. Retry the manual trade in a moment.",
+    );
+  }
+
+  await db
+    .update(executionStrategiesTable)
+    .set({
+      state: "executing",
+      updatedAt: new Date(),
+      lastError: null,
+    })
+    .where(eq(executionStrategiesTable.id, strategy.id));
+
+  return strategy;
+}
+
+async function restoreStrategyAfterManualFailure(
+  strategy: Awaited<ReturnType<typeof findStrategy>>,
+  error: unknown,
+) {
+  if (!strategy?.enabled) return;
+
+  await db
+    .update(executionStrategiesTable)
+    .set({
+      state: "watching",
+      lastError:
+        error instanceof Error
+          ? error.message
+          : String(error),
+      updatedAt: new Date(),
+    })
+    .where(eq(executionStrategiesTable.id, strategy.id));
+}
+
+async function finishManualSell(
+  strategy: Awaited<ReturnType<typeof findStrategy>>,
+  percentage: number,
+  signature: string,
+) {
+  if (!strategy) return;
+
+  const fullExit = percentage >= 100;
+
+  await db
+    .update(executionStrategiesTable)
+    .set({
+      enabled: fullExit ? false : strategy.enabled,
+      entryPriceSol: fullExit
+        ? null
+        : strategy.entryPriceSol,
+      tpFired: fullExit
+        ? false
+        : strategy.tpFired,
+      state: fullExit
+        ? "closed"
+        : strategy.enabled
+          ? "watching"
+          : "idle",
+      lastTrigger: "manual-sell",
+      lastSignature: signature,
+      lastError: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(executionStrategiesTable.id, strategy.id));
+}
+
+async function tokenBalanceAfterBuy(
+  address: string,
+  mint: string,
+  beforeBalance: number,
+): Promise<number> {
+  let latest = beforeBalance;
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    latest = await walletTokenBalance(address, mint);
+    if (latest > beforeBalance) return latest;
+
+    if (attempt < 3) {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+  }
+
+  return latest;
+}
+
+async function updateWeightedEntryAfterBuy(
+  walletId: string,
+  address: string,
+  mint: string,
+  amountSol: number,
+  beforeBalance: number,
+  previousStrategy: Awaited<ReturnType<typeof findStrategy>>,
+) {
+  const afterBalance = await tokenBalanceAfterBuy(
+    address,
+    mint,
+    beforeBalance,
+  );
+
+  const acquired = Math.max(0, afterBalance - beforeBalance);
+
+  let entryPriceSol: number;
+
+  if (acquired > 0) {
+    if (
+      beforeBalance > 0 &&
+      previousStrategy?.entryPriceSol &&
+      previousStrategy.entryPriceSol > 0
+    ) {
+      const priorCost =
+        beforeBalance * previousStrategy.entryPriceSol;
+
+      entryPriceSol =
+        (priorCost + amountSol) / afterBalance;
+    } else if (beforeBalance <= 0) {
+      entryPriceSol = amountSol / acquired;
+    } else {
+      const current = await currentPriceSol(mint);
+      const estimatedPriorCost = beforeBalance * current;
+      entryPriceSol =
+        (estimatedPriorCost + amountSol) / afterBalance;
+    }
+  } else {
+    entryPriceSol = await currentPriceSol(mint);
+  }
+
+  if (!Number.isFinite(entryPriceSol) || entryPriceSol <= 0) {
+    throw new Error("Could not calculate the weighted entry price");
+  }
+
+  const enabled = previousStrategy?.enabled ?? false;
+
+  await db
+    .insert(executionStrategiesTable)
+    .values({
+      walletId,
+      mint,
+      enabled,
+      entryPriceSol,
+      tpFired: false,
+      state: enabled ? "watching" : "idle",
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: [
+        executionStrategiesTable.walletId,
+        executionStrategiesTable.mint,
+      ],
+      set: {
+        entryPriceSol,
+        tpFired: false,
+        state: enabled ? "watching" : "idle",
+        lastTrigger: null,
+        lastSignature: null,
+        lastError: null,
+        updatedAt: new Date(),
+      },
+    });
 }
 
 router.get("/execution/wallets", async (_req, res): Promise<void> => {
@@ -267,37 +456,6 @@ router.post("/execution/strategy", async (req, res): Promise<void> => {
   res.json({ strategy: inserted[0] });
 });
 
-async function setEntryPrice(walletId: string, mint: string) {
-  const price = await currentPriceSol(mint);
-
-  await db
-    .insert(executionStrategiesTable)
-    .values({
-      walletId,
-      mint,
-      enabled: false,
-      entryPriceSol: price,
-      tpFired: false,
-      state: "idle",
-      updatedAt: new Date(),
-    })
-    .onConflictDoUpdate({
-      target: [
-        executionStrategiesTable.walletId,
-        executionStrategiesTable.mint,
-      ],
-      set: {
-        entryPriceSol: price,
-        tpFired: false,
-        state: "idle",
-        lastTrigger: null,
-        lastSignature: null,
-        lastError: null,
-        updatedAt: new Date(),
-      },
-    });
-}
-
 router.post("/execution/trade", async (req, res): Promise<void> => {
   const {
     address,
@@ -322,7 +480,15 @@ router.post("/execution/trade", async (req, res): Promise<void> => {
     return;
   }
 
+  let strategy:
+    Awaited<ReturnType<typeof findStrategy>> = null;
+
   try {
+    strategy = await lockStrategyForManualTrade(
+      wallet.id,
+      mint,
+    );
+
     const keypair = Keypair.fromSecretKey(
       decryptSecret(wallet.encryptedSecret),
     );
@@ -336,14 +502,71 @@ router.post("/execution/trade", async (req, res): Promise<void> => {
         return;
       }
 
+      const beforeBalance = await walletTokenBalance(
+        address,
+        mint,
+      );
+
       signature = await executeBuy(keypair, mint, amount);
-      await setEntryPrice(wallet.id, mint);
+
+      try {
+        await updateWeightedEntryAfterBuy(
+          wallet.id,
+          address,
+          mint,
+          amount,
+          beforeBalance,
+          strategy,
+        );
+      } catch (trackingError) {
+        req.log.error(
+          { err: trackingError, address, mint, signature },
+          "Trade succeeded but weighted entry tracking failed",
+        );
+
+        if (strategy?.enabled) {
+          await db
+            .update(executionStrategiesTable)
+            .set({
+              state: "watching",
+              lastError:
+                trackingError instanceof Error
+                  ? trackingError.message
+                  : String(trackingError),
+              updatedAt: new Date(),
+            })
+            .where(
+              eq(
+                executionStrategiesTable.id,
+                strategy.id,
+              ),
+            );
+        }
+      }
     } else {
       const percentage = Number(sellPct);
+
+      if (
+        !Number.isFinite(percentage) ||
+        percentage <= 0 ||
+        percentage > 100
+      ) {
+        res.status(400).json({
+          error: "Sell percentage must be between 0 and 100",
+        });
+        return;
+      }
+
       signature = await executeSellPercent(
         keypair,
         mint,
         percentage,
+      );
+
+      await finishManualSell(
+        strategy,
+        percentage,
+        signature,
       );
     }
 
@@ -355,6 +578,11 @@ router.post("/execution/trade", async (req, res): Promise<void> => {
       signature,
     });
   } catch (error) {
+    await restoreStrategyAfterManualFailure(
+      strategy,
+      error,
+    );
+
     req.log.error({ err: error }, "Managed trade failed");
     res.status(422).json({
       error:
@@ -376,6 +604,31 @@ router.post("/execution/trade-all", async (req, res): Promise<void> => {
     return;
   }
 
+  const buyAmount = Number(amountSol);
+  const sellPercentage = Number(sellPct);
+
+  if (
+    side === "buy" &&
+    (!Number.isFinite(buyAmount) || buyAmount <= 0)
+  ) {
+    res.status(400).json({ error: "Invalid SOL amount" });
+    return;
+  }
+
+  if (
+    side === "sell" &&
+    (
+      !Number.isFinite(sellPercentage) ||
+      sellPercentage <= 0 ||
+      sellPercentage > 100
+    )
+  ) {
+    res.status(400).json({
+      error: "Sell percentage must be between 0 and 100",
+    });
+    return;
+  }
+
   const wallets = await db
     .select()
     .from(executionWalletsTable)
@@ -384,26 +637,84 @@ router.post("/execution/trade-all", async (req, res): Promise<void> => {
   const results: Array<Record<string, unknown>> = [];
 
   for (const wallet of wallets) {
+    let strategy:
+      Awaited<ReturnType<typeof findStrategy>> = null;
+
     try {
+      strategy = await lockStrategyForManualTrade(
+        wallet.id,
+        mint,
+      );
+
       const keypair = Keypair.fromSecretKey(
         decryptSecret(wallet.encryptedSecret),
       );
 
-      const signature =
-        side === "buy"
-          ? await executeBuy(
-              keypair,
-              mint,
-              Number(amountSol),
-            )
-          : await executeSellPercent(
-              keypair,
-              mint,
-              Number(sellPct),
-            );
+      let signature: string;
 
       if (side === "buy") {
-        await setEntryPrice(wallet.id, mint);
+        const beforeBalance = await walletTokenBalance(
+          wallet.address,
+          mint,
+        );
+
+        signature = await executeBuy(
+          keypair,
+          mint,
+          buyAmount,
+        );
+
+        try {
+          await updateWeightedEntryAfterBuy(
+            wallet.id,
+            wallet.address,
+            mint,
+            buyAmount,
+            beforeBalance,
+            strategy,
+          );
+        } catch (trackingError) {
+          req.log.error(
+            {
+              err: trackingError,
+              address: wallet.address,
+              mint,
+              signature,
+            },
+            "BUY ALL trade succeeded but weighted entry tracking failed",
+          );
+
+          if (strategy?.enabled) {
+            await db
+              .update(executionStrategiesTable)
+              .set({
+                state: "watching",
+                lastError:
+                  trackingError instanceof Error
+                    ? trackingError.message
+                    : String(trackingError),
+                updatedAt: new Date(),
+              })
+              .where(
+                eq(
+                  executionStrategiesTable.id,
+                  strategy.id,
+                ),
+              );
+          }
+        }
+      } else {
+        signature = await executeSellPercent(
+          keypair,
+          mint,
+          sellPercentage,
+        );
+
+        await finishManualSell(
+          strategy,
+          sellPercentage,
+          signature,
+        );
       }
 
       results.push({
@@ -412,6 +723,11 @@ router.post("/execution/trade-all", async (req, res): Promise<void> => {
         signature,
       });
     } catch (error) {
+      await restoreStrategyAfterManualFailure(
+        strategy,
+        error,
+      );
+
       results.push({
         address: wallet.address,
         ok: false,
