@@ -1,715 +1,581 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useWallet } from '@solana/wallet-adapter-react';
-import {
-  WalletMultiButton,
-  useWalletModal,
-} from '@solana/wallet-adapter-react-ui';
-import { VersionedTransaction } from '@solana/web3.js';
-import {
-  getBalance,
-  validateMint,
-  prepareOrder,
-  executeOrder,
-} from '@workspace/api-client-react';
+import { validateMint } from '@workspace/api-client-react';
 
-const STORAGE_KEY = 'multi-wallet:wallets:v1';
+type Strategy = {
+  enabled: boolean;
+  tpPct: number;
+  tpSellPct: number;
+  slPct: number;
+  slSellPct: number;
+  entryPriceSol?: number | null;
+  state?: string;
+  lastTrigger?: string | null;
+  lastSignature?: string | null;
+  lastError?: string | null;
+};
 
-function shortAddress(value: string) {
-  return value ? `${value.slice(0, 5)}…${value.slice(-5)}` : '';
-}
-
-function bytesFromBase64(value: string) {
-  const binary = atob(value);
-  return Uint8Array.from(binary, (c) => c.charCodeAt(0));
-}
-
-function base64FromBytes(bytes: Uint8Array) {
-  let binary = '';
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-  return btoa(binary);
-}
-
-function formatSol(value: number | null | undefined) {
-  if (value == null || Number.isNaN(value)) return '—';
-  if (value >= 100) return value.toFixed(2);
-  if (value >= 1) return value.toFixed(3);
-  return value.toFixed(4);
-}
-
-function isIphoneSafari() {
-  if (typeof navigator === 'undefined') return false;
-  const ua = navigator.userAgent;
-  const ios = /iPhone|iPad|iPod/i.test(ua);
-  const safari = /Safari/i.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/i.test(ua);
-  return ios && safari;
-}
-
-interface WalletItem {
+type WalletRow = {
   id: string;
   address: string;
-  active: boolean;
-  amount: string;
-  sellPct?: string;
-  balance?: number;
-  balanceError?: string;
-}
+  enabled: boolean;
+  sol: number;
+  strategy?: Strategy | null;
+  pnl?: number | null;
+};
 
-type Side = 'buy' | 'sell';
+const short = (value: string) =>
+  `${value.slice(0, 5)}…${value.slice(-5)}`;
 
-function getErrorMsg(err: any): string {
-  if (err?.data?.error) return err.data.error;
-  if (err?.error) return err.error;
-  if (err instanceof Error) return err.message;
-  return String(err);
-}
-
-async function prepareSellOrder(input: {
-  wallet: string;
-  inputMint: string;
-  percentage: number;
-}) {
-  const response = await fetch('/api/sell-order', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
-  });
-
-  const data = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error(
-      data?.error || `Sell preparation failed (${response.status})`,
-    );
-  }
-
-  return data;
-}
+const numberText = (value: number | null | undefined, digits = 4) =>
+  value == null || !Number.isFinite(value) ? '—' : value.toFixed(digits);
 
 export default function Home() {
-  const {
-    publicKey,
-    connected,
-    signTransaction,
-    disconnect,
-  } = useWallet();
-  const { setVisible } = useWalletModal();
+  const [token, setToken] = useState(
+    () => sessionStorage.getItem('panel-token') || '',
+  );
+  const [tokenInput, setTokenInput] = useState(token);
+  const [unlocked, setUnlocked] = useState(Boolean(token));
 
-  const connectedAddress = publicKey?.toBase58() || '';
-
-  const [wallets, setWallets] = useState<WalletItem[]>(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-      return Array.isArray(saved)
-        ? saved.map((w) => ({ ...w, sellPct: w.sellPct ?? '' }))
-        : [];
-    } catch {
-      return [];
-    }
-  });
-
-  const [newAddress, setNewAddress] = useState('');
+  const [wallets, setWallets] = useState<WalletRow[]>([]);
   const [mint, setMint] = useState('');
   const [mintState, setMintState] = useState<any>({ status: 'idle' });
-  const [defaultAmount, setDefaultAmount] = useState('0.10');
-  const [defaultSellPct, setDefaultSellPct] = useState('100');
-  const [orders, setOrders] = useState<Record<string, any>>({});
-  const [busyAll, setBusyAll] = useState<Side | null>(null);
+  const [priceSol, setPriceSol] = useState<number | null>(null);
+  const [priceError, setPriceError] = useState('');
+
+  const [buyAmount, setBuyAmount] = useState('0.01');
+  const [sellPct, setSellPct] = useState('100');
+
+  const [tpPct, setTpPct] = useState('100');
+  const [tpSellPct, setTpSellPct] = useState('50');
+  const [slPct, setSlPct] = useState('30');
+  const [slSellPct, setSlSellPct] = useState('100');
+
+  const [drafts, setDrafts] = useState<Record<string, {
+    tpPct: string;
+    tpSellPct: string;
+    slPct: string;
+    slSellPct: string;
+  }>>({});
+
+  const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState('');
-  const [connectTarget, setConnectTarget] = useState('');
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(wallets));
-  }, [wallets]);
+  const api = useCallback(async (path: string, init?: RequestInit) => {
+    const response = await fetch(path, {
+      ...init,
+      headers: {
+        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+        Authorization: `Bearer ${token}`,
+        ...(init?.headers || {}),
+      },
+    });
 
-  useEffect(() => {
-    if (!connectTarget || !connectedAddress) return;
+    const data = await response.json().catch(() => ({}));
 
-    if (connectedAddress === connectTarget) {
-      setNotice(`Connected ${shortAddress(connectedAddress)}.`);
-      setConnectTarget('');
-      return;
+    if (!response.ok) {
+      throw new Error(data?.error || `HTTP ${response.status}`);
     }
 
-    setNotice(
-      `Connected ${shortAddress(connectedAddress)}, but this row is ${shortAddress(connectTarget)}. Switch to that account in your wallet and connect again.`,
-    );
-  }, [connectedAddress, connectTarget]);
+    return data;
+  }, [token]);
 
-  const activeWallets = useMemo(
-    () => wallets.filter((w) => w.active),
+  const refresh = useCallback(async () => {
+    if (!unlocked || !token) return;
+
+    try {
+      if (mintState.status === 'valid' && mint.trim()) {
+        const data = await api(
+          `/api/execution/state?mint=${encodeURIComponent(mint.trim())}`,
+        );
+
+        setWallets(data.wallets || []);
+        setPriceSol(data.priceSol ?? null);
+        setPriceError(data.priceError || '');
+
+        setDrafts((prev) => {
+          const next = { ...prev };
+          for (const wallet of data.wallets || []) {
+            if (!next[wallet.address]) {
+              const s = wallet.strategy;
+              next[wallet.address] = {
+                tpPct: String(s?.tpPct ?? tpPct),
+                tpSellPct: String(s?.tpSellPct ?? tpSellPct),
+                slPct: String(s?.slPct ?? slPct),
+                slSellPct: String(s?.slSellPct ?? slSellPct),
+              };
+            }
+          }
+          return next;
+        });
+      } else {
+        const data = await api('/api/execution/wallets');
+        setWallets(data.wallets || []);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
+  }, [
+    unlocked,
+    token,
+    mint,
+    mintState.status,
+    api,
+    tpPct,
+    tpSellPct,
+    slPct,
+    slSellPct,
+  ]);
+
+  useEffect(() => {
+    if (!unlocked) return;
+    void refresh();
+
+    const timer = window.setInterval(() => {
+      void refresh();
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, [unlocked, refresh]);
+
+  const activeCount = useMemo(
+    () => wallets.filter((w) => w.enabled).length,
     [wallets],
   );
 
-  const total = useMemo(
-    () =>
-      activeWallets.reduce(
-        (sum, w) => sum + Number(w.amount || defaultAmount || 0),
-        0,
-      ),
-    [activeWallets, defaultAmount],
-  );
+  function unlock() {
+    const value = tokenInput.trim();
+    if (!value) return;
 
-  const refreshBalance = useCallback(async (address: string) => {
-    try {
-      const data = await getBalance({ address });
-      setWallets((prev) =>
-        prev.map((w) =>
-          w.address === address
-            ? { ...w, balance: data.sol, balanceError: '' }
-            : w,
-        ),
-      );
-    } catch (error) {
-      setWallets((prev) =>
-        prev.map((w) =>
-          w.address === address
-            ? { ...w, balanceError: getErrorMsg(error) }
-            : w,
-        ),
-      );
-    }
-  }, []);
-
-  useEffect(() => {
-    wallets.forEach((wallet) => {
-      if (wallet.balance == null && !wallet.balanceError) {
-        refreshBalance(wallet.address);
-      }
-    });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function addWallet() {
+    sessionStorage.setItem('panel-token', value);
+    setToken(value);
+    setUnlocked(true);
     setNotice('');
-    const address = newAddress.trim();
-    if (!address) return;
-
-    if (wallets.some((w) => w.address === address)) {
-      setNotice('This wallet is already in the list.');
-      return;
-    }
-
-    try {
-      const data = await getBalance({ address });
-
-      const wallet: WalletItem = {
-        id: crypto.randomUUID(),
-        address,
-        active: true,
-        amount: '',
-        sellPct: '',
-        balance: data.sol,
-      };
-
-      setWallets((prev) => [...prev, wallet]);
-      setNewAddress('');
-    } catch (error) {
-      setNotice(getErrorMsg(error) || 'Invalid wallet address.');
-    }
   }
 
-  function removeWallet(id: string) {
-    const target = wallets.find((w) => w.id === id);
+  function lock() {
+    sessionStorage.removeItem('panel-token');
+    setToken('');
+    setTokenInput('');
+    setUnlocked(false);
+    setWallets([]);
+  }
 
-    if (target) {
-      setOrders((prev) => {
-        const copy = { ...prev };
-        delete copy[target.address];
-        return copy;
+  async function createWallet() {
+    setBusy('create');
+    setNotice('');
+
+    try {
+      await api('/api/execution/wallets', {
+        method: 'POST',
+        body: '{}',
       });
-    }
-
-    setWallets((prev) => prev.filter((w) => w.id !== id));
-  }
-
-  function patchWallet(id: string, patch: Partial<WalletItem>) {
-    setWallets((prev) =>
-      prev.map((w) => (w.id === id ? { ...w, ...patch } : w)),
-    );
-  }
-
-  async function connectWalletRow(address: string) {
-    setNotice('');
-
-    if (connectedAddress === address) {
-      try {
-        await disconnect();
-        setConnectTarget('');
-        setNotice(`Disconnected ${shortAddress(address)}.`);
-      } catch (error) {
-        setNotice(getErrorMsg(error));
-      }
-      return;
-    }
-
-    if (isIphoneSafari()) {
-      setNotice(
-        'iPhone Safari cannot connect Phantom directly. Open this same page inside the Phantom or Solflare in-app browser, then tap CONNECT on this row.',
-      );
-      return;
-    }
-
-    try {
-      if (connected) {
-        await disconnect();
-      }
-
-      setConnectTarget(address);
-      setVisible(true);
+      await refresh();
     } catch (error) {
-      setNotice(getErrorMsg(error));
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy('');
     }
   }
 
-  async function handleValidateMint() {
-    setMintState({ status: 'loading' });
-    setOrders({});
+  async function validate() {
     const value = mint.trim();
+    if (!value) return;
 
-    if (!value) {
-      setMintState({ status: 'idle' });
-      return;
-    }
+    setMintState({ status: 'loading' });
+    setNotice('');
 
     try {
       const data = await validateMint({ mint: value });
       setMintState({ status: 'valid', ...data });
     } catch (error) {
-      setMintState({ status: 'error', message: getErrorMsg(error) });
+      setMintState({
+        status: 'error',
+        message:
+          error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
-  function validateTradeReady() {
-    if (mintState.status !== 'valid' || mintState.mint !== mint.trim()) {
-      setNotice('Validate the mint address first.');
-      return false;
-    }
-
-    return true;
-  }
-
-  async function prepareWallet(wallet: WalletItem, side: Side) {
-    setNotice('');
-
-    if (!wallet.active) {
-      setNotice(`Enable ${shortAddress(wallet.address)} first.`);
+  async function trade(
+    address: string,
+    side: 'buy' | 'sell',
+  ) {
+    if (mintState.status !== 'valid') {
+      setNotice('Validate the mint first.');
       return;
     }
 
-    if (!validateTradeReady()) return;
+    setBusy(`${address}:${side}`);
+    setNotice('');
 
     try {
-      if (side === 'buy') {
-        const amount = Number(wallet.amount || defaultAmount);
-
-        if (!Number.isFinite(amount) || amount <= 0) {
-          throw new Error('Enter a valid SOL buy amount.');
-        }
-
-        setOrders((prev) => ({
-          ...prev,
-          [wallet.address]: { status: 'preparing', side, amount },
-        }));
-
-        const data = await prepareOrder({
-          wallet: wallet.address,
-          outputMint: mint.trim(),
-          amountSol: amount,
-        });
-
-        setOrders((prev) => ({
-          ...prev,
-          [wallet.address]: {
-            status: 'ready',
-            side,
-            amount,
-            ...data,
-          },
-        }));
-
-        return;
-      }
-
-      const percentage = Number(wallet.sellPct || defaultSellPct);
-
-      if (
-        !Number.isFinite(percentage) ||
-        percentage <= 0 ||
-        percentage > 100
-      ) {
-        throw new Error('Sell percentage must be between 0 and 100.');
-      }
-
-      setOrders((prev) => ({
-        ...prev,
-        [wallet.address]: {
-          status: 'preparing',
+      const data = await api('/api/execution/trade', {
+        method: 'POST',
+        body: JSON.stringify({
+          address,
+          mint: mint.trim(),
           side,
-          percentage,
-        },
-      }));
-
-      const data = await prepareSellOrder({
-        wallet: wallet.address,
-        inputMint: mint.trim(),
-        percentage,
+          amountSol: Number(buyAmount),
+          sellPct: Number(sellPct),
+        }),
       });
 
-      setOrders((prev) => ({
-        ...prev,
-        [wallet.address]: {
-          status: 'ready',
-          side,
-          percentage,
-          ...data,
-        },
-      }));
+      setNotice(
+        `${side.toUpperCase()} confirmed · ${short(address)} · ${data.signature}`,
+      );
+
+      await refresh();
     } catch (error) {
-      setOrders((prev) => ({
-        ...prev,
-        [wallet.address]: {
-          status: 'error',
-          side,
-          error: getErrorMsg(error),
-        },
-      }));
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy('');
     }
   }
 
-  async function prepareAll(side: Side) {
+  async function tradeAll(side: 'buy' | 'sell') {
+    if (mintState.status !== 'valid') {
+      setNotice('Validate the mint first.');
+      return;
+    }
+
+    setBusy(`all:${side}`);
     setNotice('');
 
-    if (!activeWallets.length) {
-      setNotice('Add at least one active wallet.');
-      return;
-    }
-
-    if (!validateTradeReady()) return;
-
-    setBusyAll(side);
-    await Promise.all(
-      activeWallets.map((wallet) => prepareWallet(wallet, side)),
-    );
-    setBusyAll(null);
-  }
-
-  async function signAndExecute(address: string) {
-    const order = orders[address];
-
-    if (!connected || connectedAddress !== address) {
-      setNotice(
-        `Connect ${shortAddress(address)} before signing this transaction.`,
-      );
-      return;
-    }
-
-    if (!signTransaction) {
-      setNotice(
-        'The connected wallet does not expose transaction signing.',
-      );
-      return;
-    }
-
     try {
-      setOrders((prev) => ({
-        ...prev,
-        [address]: {
-          ...prev[address],
-          status: 'signing',
-        },
-      }));
-
-      const tx = VersionedTransaction.deserialize(
-        bytesFromBase64(order.transaction),
-      );
-
-      const signed = await signTransaction(tx);
-      const signedBase64 = base64FromBytes(signed.serialize());
-
-      setOrders((prev) => ({
-        ...prev,
-        [address]: {
-          ...prev[address],
-          status: 'executing',
-        },
-      }));
-
-      const data = await executeOrder({
-        signedTransaction: signedBase64,
-        requestId: order.requestId,
-        provider: order.provider as any,
+      const data = await api('/api/execution/trade-all', {
+        method: 'POST',
+        body: JSON.stringify({
+          mint: mint.trim(),
+          side,
+          amountSol: Number(buyAmount),
+          sellPct: Number(sellPct),
+        }),
       });
 
-      if (data.status !== 'Success' && data.status !== 'success') {
-        throw new Error(
-          data.error || `Swap failed (${data.code ?? 'unknown'})`,
+      const ok = (data.results || []).filter((x: any) => x.ok).length;
+      const failed = (data.results || []).length - ok;
+
+      setNotice(
+        `${side.toUpperCase()} ALL finished · ${ok} success · ${failed} failed`,
+      );
+
+      await refresh();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  function changeDraft(
+    address: string,
+    key: keyof (typeof drafts)[string],
+    value: string,
+  ) {
+    setDrafts((prev) => ({
+      ...prev,
+      [address]: {
+        ...(prev[address] || {
+          tpPct,
+          tpSellPct,
+          slPct,
+          slSellPct,
+        }),
+        [key]: value.replace(/[^0-9.]/g, ''),
+      },
+    }));
+  }
+
+  async function saveStrategy(
+    wallet: WalletRow,
+    enabled: boolean,
+    source?: typeof drafts[string],
+  ) {
+    if (mintState.status !== 'valid') {
+      setNotice('Validate the mint first.');
+      return;
+    }
+
+    const draft =
+      source ||
+      drafts[wallet.address] || {
+        tpPct,
+        tpSellPct,
+        slPct,
+        slSellPct,
+      };
+
+    setBusy(`${wallet.address}:strategy`);
+    setNotice('');
+
+    try {
+      await api('/api/execution/strategy', {
+        method: 'POST',
+        body: JSON.stringify({
+          address: wallet.address,
+          mint: mint.trim(),
+          enabled,
+          tpPct: Number(draft.tpPct),
+          tpSellPct: Number(draft.tpSellPct),
+          slPct: Number(draft.slPct),
+          slSellPct: Number(draft.slSellPct),
+        }),
+      });
+
+      await refresh();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function applyToAll() {
+    const globalDraft = {
+      tpPct,
+      tpSellPct,
+      slPct,
+      slSellPct,
+    };
+
+    setDrafts((prev) => {
+      const next = { ...prev };
+      for (const wallet of wallets) {
+        next[wallet.address] = { ...globalDraft };
+      }
+      return next;
+    });
+
+    if (mintState.status !== 'valid') {
+      setNotice('Settings copied locally. Validate mint before enabling AUTO.');
+      return;
+    }
+
+    setBusy('apply-all');
+
+    try {
+      for (const wallet of wallets) {
+        await saveStrategy(
+          wallet,
+          wallet.strategy?.enabled ?? false,
+          globalDraft,
         );
       }
-
-      setOrders((prev) => ({
-        ...prev,
-        [address]: {
-          ...prev[address],
-          status: 'success',
-          signature: data.signature,
-          result: data,
-        },
-      }));
-
-      refreshBalance(address);
-    } catch (error) {
-      setOrders((prev) => ({
-        ...prev,
-        [address]: {
-          ...prev[address],
-          status: 'error',
-          error: getErrorMsg(error),
-        },
-      }));
+      setNotice('TP/SL applied to all wallets.');
+    } finally {
+      setBusy('');
     }
+  }
+
+  if (!unlocked) {
+    return (
+      <main className="page">
+        <section className="shell unlock">
+          <h1>24/7 EXECUTION</h1>
+          <p>
+            Enter your private panel access token. This is not a wallet seed
+            or private key.
+          </p>
+          <div className="unlock-row">
+            <input
+              type="password"
+              value={tokenInput}
+              onChange={(e) => setTokenInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && unlock()}
+              placeholder="Panel access token"
+            />
+            <button onClick={unlock}>UNLOCK</button>
+          </div>
+        </section>
+      </main>
+    );
   }
 
   return (
     <main className="page">
       <section className="shell">
         <header className="topbar">
-          <h1>MULTI WALLET</h1>
-          <WalletMultiButton className="wallet-connect" />
+          <h1>24/7 EXECUTION</h1>
+          <button className="link-button" onClick={lock}>LOCK</button>
         </header>
 
         <section className="section">
           <div className="section-head">
-            <span>Wallets</span>
-            <span className="muted">
-              {activeWallets.length} active
-            </span>
+            <span>Execution wallets</span>
+            <div className="head-actions">
+              <span className="muted">{activeCount} active</span>
+              <button
+                className="link-button"
+                onClick={createWallet}
+                disabled={busy === 'create'}
+              >
+                + CREATE WALLET
+              </button>
+            </div>
           </div>
 
-          <div className="add-row">
-            <input
-              value={newAddress}
-              onChange={(e) => setNewAddress(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && addWallet()}
-              placeholder="Solana wallet address"
-              spellCheck="false"
-            />
-            <button
-              className="text-button"
-              onClick={addWallet}
-            >
-              + Add wallet
-            </button>
-          </div>
+          {wallets.length === 0 && (
+            <div className="empty">
+              Create a dedicated 24/7 trading wallet, then fund its public
+              address with a small SOL trading balance.
+            </div>
+          )}
 
           <div className="wallet-list">
-            {wallets.length === 0 && (
-              <div className="empty">No wallets added.</div>
-            )}
-
             {wallets.map((wallet, index) => {
-              const order = orders[wallet.address];
-              const matches =
-                connectedAddress === wallet.address;
-
-              const rowBusy =
-                order &&
-                ['preparing', 'signing', 'executing'].includes(
-                  order.status,
-                );
+              const draft =
+                drafts[wallet.address] || {
+                  tpPct,
+                  tpSellPct,
+                  slPct,
+                  slSellPct,
+                };
 
               return (
-                <div
-                  className="wallet-row"
-                  key={wallet.id}
-                >
-                  <div className="wallet-top">
-                    <button
-                      className={`toggle ${
-                        wallet.active ? 'on' : ''
-                      }`}
-                      aria-label="toggle wallet"
-                      onClick={() =>
-                        patchWallet(wallet.id, {
-                          active: !wallet.active,
-                        })
-                      }
-                    >
-                      <span />
-                    </button>
-
+                <div className="wallet-row" key={wallet.id}>
+                  <div className="wallet-line">
                     <span className="index">
                       {String(index + 1).padStart(2, '0')}
                     </span>
-
-                    <div className="wallet-main">
-                      <div className="address-line">
-                        <span
-                          className="address"
-                          title={wallet.address}
-                        >
-                          {shortAddress(wallet.address)}
-                        </span>
-                      </div>
-
-                      <div className="wallet-sub">
-                        {wallet.balanceError
-                          ? wallet.balanceError
-                          : `${formatSol(wallet.balance)} SOL`}
-                      </div>
+                    <div className="wallet-id">
+                      <strong title={wallet.address}>
+                        {short(wallet.address)}
+                      </strong>
+                      <span>{numberText(wallet.sol)} SOL</span>
                     </div>
+                    <span className="managed">24/7</span>
+                  </div>
 
+                  <div className="trade-row">
+                    <span>BUY</span>
                     <button
-                      className={`row-connect ${
-                        matches ? 'connected' : ''
+                      className="buy"
+                      onClick={() => trade(wallet.address, 'buy')}
+                      disabled={Boolean(busy)}
+                    >
+                      BUY
+                    </button>
+                    <span>SELL</span>
+                    <button
+                      className="sell"
+                      onClick={() => trade(wallet.address, 'sell')}
+                      disabled={Boolean(busy)}
+                    >
+                      SELL
+                    </button>
+                  </div>
+
+                  <div className="strategy-row">
+                    <button
+                      className={`auto ${
+                        wallet.strategy?.enabled ? 'on' : ''
                       }`}
                       onClick={() =>
-                        connectWalletRow(wallet.address)
+                        saveStrategy(
+                          wallet,
+                          !wallet.strategy?.enabled,
+                        )
                       }
+                      disabled={Boolean(busy)}
                     >
-                      {matches ? 'CONNECTED' : 'CONNECT'}
+                      AUTO {wallet.strategy?.enabled ? 'ON' : 'OFF'}
                     </button>
 
+                    <label>
+                      TP
+                      <input
+                        value={draft.tpPct}
+                        onChange={(e) =>
+                          changeDraft(
+                            wallet.address,
+                            'tpPct',
+                            e.target.value,
+                          )
+                        }
+                      />
+                      %
+                    </label>
+
+                    <label>
+                      SELL
+                      <input
+                        value={draft.tpSellPct}
+                        onChange={(e) =>
+                          changeDraft(
+                            wallet.address,
+                            'tpSellPct',
+                            e.target.value,
+                          )
+                        }
+                      />
+                      %
+                    </label>
+
+                    <label>
+                      SL
+                      <input
+                        value={draft.slPct}
+                        onChange={(e) =>
+                          changeDraft(
+                            wallet.address,
+                            'slPct',
+                            e.target.value,
+                          )
+                        }
+                      />
+                      %
+                    </label>
+
+                    <label>
+                      SELL
+                      <input
+                        value={draft.slSellPct}
+                        onChange={(e) =>
+                          changeDraft(
+                            wallet.address,
+                            'slSellPct',
+                            e.target.value,
+                          )
+                        }
+                      />
+                      %
+                    </label>
+
                     <button
-                      className="icon-button"
+                      className="save"
                       onClick={() =>
-                        refreshBalance(wallet.address)
+                        saveStrategy(
+                          wallet,
+                          wallet.strategy?.enabled ?? false,
+                        )
                       }
-                      aria-label="refresh balance"
+                      disabled={Boolean(busy)}
                     >
-                      ↻
-                    </button>
-
-                    <button
-                      className="icon-button"
-                      onClick={() => removeWallet(wallet.id)}
-                      aria-label="remove wallet"
-                    >
-                      ×
+                      SAVE
                     </button>
                   </div>
 
-                  <div className="wallet-controls">
-                    <div className="wallet-control">
-                      <span className="control-label">BUY</span>
-
-                      <input
-                        className="wallet-amount"
-                        inputMode="decimal"
-                        value={wallet.amount}
-                        onChange={(e) =>
-                          patchWallet(wallet.id, {
-                            amount: e.target.value.replace(
-                              /[^0-9.]/g,
-                              '',
-                            ),
-                          })
-                        }
-                        placeholder={
-                          defaultAmount || '0.10'
-                        }
-                        aria-label="wallet buy amount"
-                      />
-
-                      <span className="control-unit">SOL</span>
-
-                      <button
-                        className="trade-button buy"
-                        disabled={
-                          !wallet.active || rowBusy
-                        }
-                        onClick={() =>
-                          prepareWallet(wallet, 'buy')
-                        }
-                      >
-                        BUY
-                      </button>
-                    </div>
-
-                    <div className="wallet-control">
-                      <span className="control-label">
-                        SELL
-                      </span>
-
-                      <input
-                        className="wallet-percent"
-                        inputMode="decimal"
-                        value={wallet.sellPct || ''}
-                        onChange={(e) =>
-                          patchWallet(wallet.id, {
-                            sellPct:
-                              e.target.value.replace(
-                                /[^0-9.]/g,
-                                '',
-                              ),
-                          })
-                        }
-                        placeholder={
-                          defaultSellPct || '100'
-                        }
-                        aria-label="wallet sell percent"
-                      />
-
-                      <span className="control-unit">%</span>
-
-                      <button
-                        className="trade-button sell"
-                        disabled={
-                          !wallet.active || rowBusy
-                        }
-                        onClick={() =>
-                          prepareWallet(wallet, 'sell')
-                        }
-                      >
-                        SELL
-                      </button>
-                    </div>
+                  <div className="status-row">
+                    <span>
+                      ENTRY{' '}
+                      {wallet.strategy?.entryPriceSol
+                        ? wallet.strategy.entryPriceSol.toExponential(3)
+                        : '—'}
+                    </span>
+                    <strong>
+                      P&L{' '}
+                      {wallet.pnl == null
+                        ? '—'
+                        : `${wallet.pnl >= 0 ? '+' : ''}${wallet.pnl.toFixed(1)}%`}
+                    </strong>
+                    <span>
+                      {wallet.strategy?.state?.toUpperCase() || 'IDLE'}
+                    </span>
                   </div>
 
-                  {order && (
-                    <div
-                      className={`order-line ${order.status}`}
-                    >
-                      <span>
-                        {order.status === 'ready'
-                          ? `Ready ${String(
-                              order.side || '',
-                            ).toUpperCase()} · ${
-                              order.router || 'route'
-                            }`
-                          : order.status === 'success'
-                            ? `${String(
-                                order.side || '',
-                              ).toUpperCase()} confirmed`
-                            : order.status === 'error'
-                              ? order.error
-                              : order.status}
-                      </span>
-
-                      {order.status === 'ready' && (
-                        <button
-                          onClick={() =>
-                            signAndExecute(
-                              wallet.address,
-                            )
-                          }
-                          disabled={!matches}
-                        >
-                          Sign & execute
-                        </button>
-                      )}
-
-                      {order.status === 'success' &&
-                        order.signature && (
-                          <a
-                            href={`https://solscan.io/tx/${order.signature}`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            Solscan
-                          </a>
-                        )}
+                  {wallet.strategy?.lastError && (
+                    <div className="row-error">
+                      {wallet.strategy.lastError}
                     </div>
                   )}
                 </div>
@@ -718,143 +584,96 @@ export default function Home() {
           </div>
         </section>
 
-        <section className="section token-section">
-          <div className="section-head">
-            <span>Token</span>
-          </div>
-
+        <section className="section">
+          <div className="section-head"><span>Token</span></div>
           <div className="field-row">
             <input
               value={mint}
               onChange={(e) => {
                 setMint(e.target.value);
                 setMintState({ status: 'idle' });
-                setOrders({});
               }}
               placeholder="Paste token mint"
               spellCheck="false"
             />
-
-            <button
-              className="text-button"
-              onClick={handleValidateMint}
-            >
-              Validate
+            <button className="link-button" onClick={validate}>
+              VALIDATE
             </button>
           </div>
-
-          <div
-            className={`validation ${mintState.status}`}
-          >
-            {mintState.status === 'loading' &&
-              'Checking mint…'}
-
+          <div className={`validation ${mintState.status}`}>
+            {mintState.status === 'loading' && 'Checking…'}
             {mintState.status === 'valid' &&
               `Valid SPL mint · ${mintState.decimals} decimals`}
-
-            {mintState.status === 'error' &&
-              mintState.message}
+            {mintState.status === 'error' && mintState.message}
+            {priceSol != null &&
+              ` · ${priceSol.toExponential(3)} SOL/token`}
+            {priceError && ` · ${priceError}`}
           </div>
         </section>
 
-        <section className="section trade-section">
-          <div className="section-head">
-            <span>All wallets</span>
-          </div>
+        <section className="section">
+          <div className="section-head"><span>Trade all</span></div>
 
-          <div className="global-settings">
-            <div className="global-setting">
-              <span>Buy / wallet</span>
+          <div className="global-grid">
+            <label>
+              Buy / wallet
+              <div><input value={buyAmount} onChange={(e) => setBuyAmount(e.target.value.replace(/[^0-9.]/g, ''))} /><b>SOL</b></div>
+            </label>
 
-              <div className="global-input">
-                <input
-                  inputMode="decimal"
-                  value={defaultAmount}
-                  onChange={(e) =>
-                    setDefaultAmount(
-                      e.target.value.replace(
-                        /[^0-9.]/g,
-                        '',
-                      ),
-                    )
-                  }
-                />
-                <b>SOL</b>
-              </div>
-            </div>
-
-            <div className="global-setting">
-              <span>Sell / wallet</span>
-
-              <div className="global-input">
-                <input
-                  inputMode="decimal"
-                  value={defaultSellPct}
-                  onChange={(e) =>
-                    setDefaultSellPct(
-                      e.target.value.replace(
-                        /[^0-9.]/g,
-                        '',
-                      ),
-                    )
-                  }
-                />
-                <b>%</b>
-              </div>
-            </div>
-          </div>
-
-          <div className="summary">
-            <span>
-              {activeWallets.length} wallet
-              {activeWallets.length === 1 ? '' : 's'}
-            </span>
-
-            <strong>
-              {Number.isFinite(total)
-                ? total.toFixed(4)
-                : '0.0000'}{' '}
-              SOL buy total
-            </strong>
+            <label>
+              Sell / wallet
+              <div><input value={sellPct} onChange={(e) => setSellPct(e.target.value.replace(/[^0-9.]/g, ''))} /><b>%</b></div>
+            </label>
           </div>
 
           <div className="all-actions">
             <button
-              className="primary buy-all"
-              onClick={() => prepareAll('buy')}
-              disabled={
-                busyAll !== null ||
-                !activeWallets.length
-              }
+              className="primary"
+              onClick={() => tradeAll('buy')}
+              disabled={Boolean(busy)}
             >
-              {busyAll === 'buy'
-                ? 'PREPARING…'
-                : 'BUY ALL'}
+              BUY ALL
             </button>
-
             <button
-              className="primary sell-all"
-              onClick={() => prepareAll('sell')}
-              disabled={
-                busyAll !== null ||
-                !activeWallets.length
-              }
+              className="secondary"
+              onClick={() => tradeAll('sell')}
+              disabled={Boolean(busy)}
             >
-              {busyAll === 'sell'
-                ? 'PREPARING…'
-                : 'SELL ALL'}
+              SELL ALL
             </button>
           </div>
         </section>
 
-        {notice && (
-          <div className="notice">{notice}</div>
-        )}
+        <section className="section">
+          <div className="section-head">
+            <span>Auto strategy</span>
+            <button
+              className="link-button"
+              onClick={applyToAll}
+              disabled={Boolean(busy)}
+            >
+              APPLY TO ALL
+            </button>
+          </div>
+
+          <div className="strategy-global">
+            <label>TP <div><input value={tpPct} onChange={(e) => setTpPct(e.target.value.replace(/[^0-9.]/g, ''))}/><b>%</b></div></label>
+            <label>TP SELL <div><input value={tpSellPct} onChange={(e) => setTpSellPct(e.target.value.replace(/[^0-9.]/g, ''))}/><b>%</b></div></label>
+            <label>SL <div><input value={slPct} onChange={(e) => setSlPct(e.target.value.replace(/[^0-9.]/g, ''))}/><b>%</b></div></label>
+            <label>SL SELL <div><input value={slSellPct} onChange={(e) => setSlSellPct(e.target.value.replace(/[^0-9.]/g, ''))}/><b>%</b></div></label>
+          </div>
+
+          <p className="note">
+            AUTO runs on the server. The phone and browser can be closed.
+            Use a Reserved VM deployment so the worker stays online.
+          </p>
+        </section>
+
+        {notice && <div className="notice">{notice}</div>}
 
         <p className="footnote">
-          Private keys and seed phrases are never stored by
-          this app. Prepared transactions are signed only by
-          the matching connected wallet.
+          Dedicated execution-wallet keys are encrypted at rest with your
+          Replit secret. Never use a main savings wallet here.
         </p>
       </section>
     </main>
