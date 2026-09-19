@@ -10,7 +10,9 @@ import { decryptSecret } from "./execution-vault";
 import {
   currentPriceSol,
   executeSellPercent,
+  walletTokenBalance,
 } from "./execution-engine";
+import { recordSellAccounting } from "./position-accounting";
 
 let running = false;
 let timer: NodeJS.Timeout | null = null;
@@ -115,32 +117,31 @@ async function tick() {
         const secret = decryptSecret(wallet.encryptedSecret);
         const keypair = Keypair.fromSecretKey(secret);
 
+        const beforeBalance = await walletTokenBalance(
+          wallet.address,
+          strategy.mint,
+        );
+
         const signature = await executeSellPercent(
           keypair,
           strategy.mint,
           sellPct,
         );
 
-        const fullExit = sellPct >= 100;
-        const tpFired = trigger === "tp" ? true : strategy.tpFired;
-
-        await db
-          .update(executionStrategiesTable)
-          .set({
-            enabled:
-              trigger === "sl" || fullExit
-                ? false
-                : strategy.enabled,
-            tpFired,
-            state:
-              trigger === "sl" || fullExit
-                ? "closed"
-                : "watching",
-            lastSignature: signature,
-            lastError: null,
-            updatedAt: new Date(),
-          })
-          .where(eq(executionStrategiesTable.id, strategy.id));
+        await recordSellAccounting({
+          strategy,
+          address: wallet.address,
+          mint: strategy.mint,
+          beforeBalance,
+          percentage: sellPct,
+          signature,
+          trigger,
+          forceDisable: trigger === "sl",
+          tpFired:
+            trigger === "tp"
+              ? true
+              : strategy.tpFired,
+        });
 
         logger.info(
           {

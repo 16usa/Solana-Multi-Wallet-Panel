@@ -439,3 +439,65 @@ html[data-theme='dark'] .trade-value b {
     font-size:9px;
   }
 }
+
+
+/* v7.1 compact aggregate P&L */
+.pnl-summary {
+  margin:0 0 9px;
+  padding:7px 0 8px;
+  border-bottom:1px solid #ededed;
+}
+
+.pnl-summary-main {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  font-size:8px;
+  font-weight:750;
+}
+
+.pnl-summary-main strong {
+  display:flex;
+  align-items:baseline;
+  gap:7px;
+  font-size:11px;
+  white-space:nowrap;
+}
+
+.pnl-summary-main strong b {
+  font-size:8px;
+  font-weight:650;
+}
+
+.pnl-summary-split {
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  margin-top:5px;
+  color:#888;
+  font-size:7px;
+}
+
+.pnl-summary-split span {
+  display:flex;
+  align-items:center;
+  gap:5px;
+}
+
+.pnl-summary-split b {
+  color:#555;
+  font-weight:650;
+}
+
+html[data-theme='dark'] .pnl-summary {
+  border-color:#262626;
+}
+
+html[data-theme='dark'] .pnl-summary-split {
+  color:#777;
+}
+
+html[data-theme='dark'] .pnl-summary-split b {
+  color:#aaa;
+}

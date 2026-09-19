@@ -17,6 +17,11 @@ import {
   withdrawSol,
   walletDeletionState,
 } from "../lib/execution-engine";
+import {
+  financialSnapshot,
+  recordBuyAccounting,
+  recordSellAccounting,
+} from "../lib/position-accounting";
 
 const router: IRouter = Router();
 
@@ -111,131 +116,6 @@ async function restoreStrategyAfterManualFailure(
     .where(eq(executionStrategiesTable.id, strategy.id));
 }
 
-async function finishManualSell(
-  strategy: Awaited<ReturnType<typeof findStrategy>>,
-  percentage: number,
-  signature: string,
-) {
-  if (!strategy) return;
-
-  const fullExit = percentage >= 100;
-
-  await db
-    .update(executionStrategiesTable)
-    .set({
-      enabled: fullExit ? false : strategy.enabled,
-      entryPriceSol: fullExit
-        ? null
-        : strategy.entryPriceSol,
-      tpFired: fullExit
-        ? false
-        : strategy.tpFired,
-      state: fullExit
-        ? "closed"
-        : strategy.enabled
-          ? "watching"
-          : "idle",
-      lastTrigger: "manual-sell",
-      lastSignature: signature,
-      lastError: null,
-      updatedAt: new Date(),
-    })
-    .where(eq(executionStrategiesTable.id, strategy.id));
-}
-
-async function tokenBalanceAfterBuy(
-  address: string,
-  mint: string,
-  beforeBalance: number,
-): Promise<number> {
-  let latest = beforeBalance;
-
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    latest = await walletTokenBalance(address, mint);
-    if (latest > beforeBalance) return latest;
-
-    if (attempt < 3) {
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    }
-  }
-
-  return latest;
-}
-
-async function updateWeightedEntryAfterBuy(
-  walletId: string,
-  address: string,
-  mint: string,
-  amountSol: number,
-  beforeBalance: number,
-  previousStrategy: Awaited<ReturnType<typeof findStrategy>>,
-) {
-  const afterBalance = await tokenBalanceAfterBuy(
-    address,
-    mint,
-    beforeBalance,
-  );
-
-  const acquired = Math.max(0, afterBalance - beforeBalance);
-
-  let entryPriceSol: number;
-
-  if (acquired > 0) {
-    if (
-      beforeBalance > 0 &&
-      previousStrategy?.entryPriceSol &&
-      previousStrategy.entryPriceSol > 0
-    ) {
-      const priorCost =
-        beforeBalance * previousStrategy.entryPriceSol;
-
-      entryPriceSol =
-        (priorCost + amountSol) / afterBalance;
-    } else if (beforeBalance <= 0) {
-      entryPriceSol = amountSol / acquired;
-    } else {
-      const current = await currentPriceSol(mint);
-      const estimatedPriorCost = beforeBalance * current;
-      entryPriceSol =
-        (estimatedPriorCost + amountSol) / afterBalance;
-    }
-  } else {
-    entryPriceSol = await currentPriceSol(mint);
-  }
-
-  if (!Number.isFinite(entryPriceSol) || entryPriceSol <= 0) {
-    throw new Error("Could not calculate the weighted entry price");
-  }
-
-  const enabled = previousStrategy?.enabled ?? false;
-
-  await db
-    .insert(executionStrategiesTable)
-    .values({
-      walletId,
-      mint,
-      enabled,
-      entryPriceSol,
-      tpFired: false,
-      state: enabled ? "watching" : "idle",
-      updatedAt: new Date(),
-    })
-    .onConflictDoUpdate({
-      target: [
-        executionStrategiesTable.walletId,
-        executionStrategiesTable.mint,
-      ],
-      set: {
-        entryPriceSol,
-        tpFired: false,
-        state: enabled ? "watching" : "idle",
-        lastTrigger: null,
-        lastSignature: null,
-        lastError: null,
-        updatedAt: new Date(),
-      },
-    });
-}
 
 router.get("/execution/wallets", async (_req, res): Promise<void> => {
   const wallets = await db
@@ -327,36 +207,90 @@ router.get("/execution/state", async (req, res): Promise<void> => {
   const rows = await Promise.all(
     wallets.map(async (wallet) => {
       let sol = 0;
+      let tokenBalance = 0;
+
       try {
         sol = await walletSolBalance(wallet.address);
       } catch {
         sol = 0;
       }
 
+      try {
+        tokenBalance = await walletTokenBalance(
+          wallet.address,
+          mint,
+        );
+      } catch {
+        tokenBalance = 0;
+      }
+
       const strategy = strategyByWallet.get(wallet.id) ?? null;
-      const pnl =
-        strategy?.entryPriceSol &&
-        priceSol != null
-          ? ((priceSol - strategy.entryPriceSol) /
-              strategy.entryPriceSol) *
-            100
-          : null;
+      const financials = financialSnapshot(
+        strategy,
+        tokenBalance,
+        priceSol,
+      );
 
       return {
         id: wallet.id,
         address: wallet.address,
         enabled: wallet.enabled,
         sol,
+        tokenBalance,
         strategy,
-        pnl,
+        pnl: financials.totalPnlPct,
+        ...financials,
       };
     }),
   );
+
+  const realizedPnlSol = rows.reduce(
+    (sum, wallet) => sum + wallet.realizedPnlSol,
+    0,
+  );
+
+  const totalInvestedSol = rows.reduce(
+    (sum, wallet) => sum + wallet.totalInvestedSol,
+    0,
+  );
+
+  const canValueOpenPositions =
+    priceSol != null &&
+    rows.every(
+      (wallet) =>
+        wallet.tokenBalance <= 0 ||
+        wallet.unrealizedPnlSol != null,
+    );
+
+  const unrealizedPnlSol = canValueOpenPositions
+    ? rows.reduce(
+        (sum, wallet) =>
+          sum + (wallet.unrealizedPnlSol ?? 0),
+        0,
+      )
+    : null;
+
+  const totalPnlSol =
+    unrealizedPnlSol == null
+      ? null
+      : realizedPnlSol + unrealizedPnlSol;
+
+  const totalPnlPct =
+    totalPnlSol != null && totalInvestedSol > 0
+      ? (totalPnlSol / totalInvestedSol) * 100
+      : null;
 
   res.json({
     mint,
     priceSol,
     priceError,
+    summary: {
+      totalPnlSol,
+      totalPnlPct,
+      realizedPnlSol,
+      unrealizedPnlSol,
+      totalInvestedSol,
+    },
     wallets: rows,
   });
 });
@@ -510,14 +444,14 @@ router.post("/execution/trade", async (req, res): Promise<void> => {
       signature = await executeBuy(keypair, mint, amount);
 
       try {
-        await updateWeightedEntryAfterBuy(
-          wallet.id,
+        await recordBuyAccounting({
+          walletId: wallet.id,
           address,
           mint,
-          amount,
+          amountSol: amount,
           beforeBalance,
-          strategy,
-        );
+          previousStrategy: strategy,
+        });
       } catch (trackingError) {
         req.log.error(
           { err: trackingError, address, mint, signature },
@@ -557,17 +491,63 @@ router.post("/execution/trade", async (req, res): Promise<void> => {
         return;
       }
 
+      const beforeBalance = await walletTokenBalance(
+        address,
+        mint,
+      );
+
       signature = await executeSellPercent(
         keypair,
         mint,
         percentage,
       );
 
-      await finishManualSell(
-        strategy,
-        percentage,
-        signature,
-      );
+      try {
+        await recordSellAccounting({
+          strategy,
+          address,
+          mint,
+          beforeBalance,
+          percentage,
+          signature,
+          trigger: "manual-sell",
+          forceDisable: false,
+        });
+      } catch (trackingError) {
+        req.log.error(
+          { err: trackingError, address, mint, signature },
+          "SELL succeeded but P&L accounting failed",
+        );
+
+        if (strategy) {
+          const fullExit = percentage >= 100;
+
+          await db
+            .update(executionStrategiesTable)
+            .set({
+              enabled: fullExit ? false : strategy.enabled,
+              entryPriceSol: fullExit
+                ? null
+                : strategy.entryPriceSol,
+              positionCostSol: fullExit
+                ? 0
+                : strategy.positionCostSol,
+              state: fullExit
+                ? "closed"
+                : strategy.enabled
+                  ? "watching"
+                  : "idle",
+              lastTrigger: "manual-sell",
+              lastSignature: signature,
+              lastError:
+                trackingError instanceof Error
+                  ? trackingError.message
+                  : String(trackingError),
+              updatedAt: new Date(),
+            })
+            .where(eq(executionStrategiesTable.id, strategy.id));
+        }
+      }
     }
 
     res.json({
@@ -665,14 +645,14 @@ router.post("/execution/trade-all", async (req, res): Promise<void> => {
         );
 
         try {
-          await updateWeightedEntryAfterBuy(
-            wallet.id,
-            wallet.address,
+          await recordBuyAccounting({
+            walletId: wallet.id,
+            address: wallet.address,
             mint,
-            buyAmount,
+            amountSol: buyAmount,
             beforeBalance,
-            strategy,
-          );
+            previousStrategy: strategy,
+          });
         } catch (trackingError) {
           req.log.error(
             {
@@ -704,17 +684,68 @@ router.post("/execution/trade-all", async (req, res): Promise<void> => {
           }
         }
       } else {
+        const beforeBalance = await walletTokenBalance(
+          wallet.address,
+          mint,
+        );
+
         signature = await executeSellPercent(
           keypair,
           mint,
           sellPercentage,
         );
 
-        await finishManualSell(
-          strategy,
-          sellPercentage,
-          signature,
-        );
+        try {
+          await recordSellAccounting({
+            strategy,
+            address: wallet.address,
+            mint,
+            beforeBalance,
+            percentage: sellPercentage,
+            signature,
+            trigger: "manual-sell-all",
+            forceDisable: false,
+          });
+        } catch (trackingError) {
+          req.log.error(
+            {
+              err: trackingError,
+              address: wallet.address,
+              mint,
+              signature,
+            },
+            "SELL ALL trade succeeded but P&L accounting failed",
+          );
+
+          if (strategy) {
+            const fullExit = sellPercentage >= 100;
+
+            await db
+              .update(executionStrategiesTable)
+              .set({
+                enabled: fullExit ? false : strategy.enabled,
+                entryPriceSol: fullExit
+                  ? null
+                  : strategy.entryPriceSol,
+                positionCostSol: fullExit
+                  ? 0
+                  : strategy.positionCostSol,
+                state: fullExit
+                  ? "closed"
+                  : strategy.enabled
+                    ? "watching"
+                    : "idle",
+                lastTrigger: "manual-sell-all",
+                lastSignature: signature,
+                lastError:
+                  trackingError instanceof Error
+                    ? trackingError.message
+                    : String(trackingError),
+                updatedAt: new Date(),
+              })
+              .where(eq(executionStrategiesTable.id, strategy.id));
+          }
+        }
       }
 
       results.push({

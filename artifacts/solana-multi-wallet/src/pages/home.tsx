@@ -12,6 +12,9 @@ type Strategy = {
   slPct: number;
   slSellPct: number;
   entryPriceSol?: number | null;
+  positionCostSol?: number;
+  totalInvestedSol?: number;
+  realizedPnlSol?: number;
   state?: string;
   lastTrigger?: string | null;
   lastSignature?: string | null;
@@ -25,6 +28,21 @@ type WalletRow = {
   sol: number;
   strategy?: Strategy | null;
   pnl?: number | null;
+  tokenBalance?: number;
+  positionCostSol?: number;
+  totalInvestedSol?: number;
+  realizedPnlSol?: number;
+  unrealizedPnlSol?: number | null;
+  totalPnlSol?: number | null;
+  totalPnlPct?: number | null;
+};
+
+type PnlSummary = {
+  totalPnlSol: number | null;
+  totalPnlPct: number | null;
+  realizedPnlSol: number;
+  unrealizedPnlSol: number | null;
+  totalInvestedSol: number;
 };
 
 const short = (value: string) =>
@@ -32,6 +50,22 @@ const short = (value: string) =>
 
 const numberText = (value: number | null | undefined, digits = 4) =>
   value == null || !Number.isFinite(value) ? '—' : value.toFixed(digits);
+
+const signedSolText = (
+  value: number | null | undefined,
+  digits = 4,
+) =>
+  value == null || !Number.isFinite(value)
+    ? '—'
+    : `${value > 0 ? '+' : ''}${value.toFixed(digits)} SOL`;
+
+const signedPctText = (
+  value: number | null | undefined,
+  digits = 2,
+) =>
+  value == null || !Number.isFinite(value)
+    ? '—'
+    : `${value > 0 ? '+' : ''}${value.toFixed(digits)}%`;
 
 export default function Home() {
   const [token, setToken] = useState(
@@ -49,6 +83,7 @@ export default function Home() {
   const [mintState, setMintState] = useState<any>({ status: 'idle' });
   const [priceSol, setPriceSol] = useState<number | null>(null);
   const [priceError, setPriceError] = useState('');
+  const [pnlSummary, setPnlSummary] = useState<PnlSummary | null>(null);
 
   const [buyAmount, setBuyAmount] = useState('0.01');
   const [sellPct, setSellPct] = useState('100');
@@ -118,6 +153,7 @@ export default function Home() {
         setWallets(data.wallets || []);
         setPriceSol(data.priceSol ?? null);
         setPriceError(data.priceError || '');
+        setPnlSummary(data.summary || null);
 
         setDrafts((prev) => {
           const next = { ...prev };
@@ -137,6 +173,7 @@ export default function Home() {
       } else {
         const data = await api('/api/execution/wallets');
         setWallets(data.wallets || []);
+        setPnlSummary(null);
       }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
@@ -1069,6 +1106,7 @@ export default function Home() {
               onChange={(e) => {
                 setMint(e.target.value);
                 setMintState({ status: 'idle' });
+                setPnlSummary(null);
               }}
               placeholder="Paste token mint"
               spellCheck="false"
@@ -1090,6 +1128,27 @@ export default function Home() {
 
         <section className="section">
           <div className="section-head"><span>Trade all</span></div>
+
+          <div className="pnl-summary">
+            <div className="pnl-summary-main">
+              <span>TOTAL P&amp;L</span>
+              <strong>
+                {signedSolText(pnlSummary?.totalPnlSol)}
+                <b>{signedPctText(pnlSummary?.totalPnlPct)}</b>
+              </strong>
+            </div>
+
+            <div className="pnl-summary-split">
+              <span>
+                REALIZED
+                <b>{signedSolText(pnlSummary?.realizedPnlSol)}</b>
+              </span>
+              <span>
+                UNREALIZED
+                <b>{signedSolText(pnlSummary?.unrealizedPnlSol)}</b>
+              </span>
+            </div>
+          </div>
 
           <div className="global-grid">
             <label>

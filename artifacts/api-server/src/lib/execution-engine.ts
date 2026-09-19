@@ -281,6 +281,53 @@ export async function walletSolBalance(address: string): Promise<number> {
   return lamports / LAMPORTS_PER_SOL;
 }
 
+export async function transactionSolDelta(
+  address: string,
+  signature: string,
+): Promise<number> {
+  const owner = new PublicKey(address);
+
+  const transaction = await executionConnection.getTransaction(
+    signature,
+    {
+      commitment: "confirmed",
+      maxSupportedTransactionVersion: 0,
+    },
+  );
+
+  if (!transaction?.meta) {
+    throw new Error("Confirmed transaction details are unavailable");
+  }
+
+  const accountKeys = transaction.transaction.message.getAccountKeys({
+    accountKeysFromLookups:
+      transaction.meta.loadedAddresses ?? undefined,
+  });
+
+  let ownerIndex = -1;
+
+  for (let index = 0; index < accountKeys.length; index += 1) {
+    const key = accountKeys.get(index);
+    if (key?.equals(owner)) {
+      ownerIndex = index;
+      break;
+    }
+  }
+
+  if (ownerIndex < 0) {
+    throw new Error("Wallet was not found in the confirmed transaction");
+  }
+
+  const before = transaction.meta.preBalances[ownerIndex];
+  const after = transaction.meta.postBalances[ownerIndex];
+
+  if (before == null || after == null) {
+    throw new Error("Transaction SOL balance delta is unavailable");
+  }
+
+  return (after - before) / LAMPORTS_PER_SOL;
+}
+
 export async function walletTokenBalance(
   address: string,
   mint: string,
