@@ -54,6 +54,40 @@ async function readJson(response: globalThis.Response): Promise<JsonRecord> {
   }
 }
 
+async function lookupPumpCoin(mint: string, req: any): Promise<JsonRecord> {
+  try {
+    const coinResponse = await fetch(`${pumpCoinApi}/${mint}`);
+    if (coinResponse.ok) return await readJson(coinResponse);
+  } catch (error) {
+    req.log.warn({ err: error }, "Pump.fun mint lookup failed; trying Jupiter");
+  }
+  return {};
+}
+
+async function rawTokenBalance(wallet: string, mint: string): Promise<bigint> {
+  const result = await connection.getParsedTokenAccountsByOwner(
+    new PublicKey(wallet),
+    { mint: new PublicKey(mint) },
+    "confirmed",
+  );
+
+  let total = 0n;
+
+  for (const item of result.value) {
+    const data = asRecord(item.account.data);
+    const parsed = asRecord(data.parsed);
+    const info = asRecord(parsed.info);
+    const tokenAmount = asRecord(info.tokenAmount);
+    const amount = stringValue(tokenAmount.amount);
+
+    if (amount && /^\d+$/.test(amount)) {
+      total += BigInt(amount);
+    }
+  }
+
+  return total;
+}
+
 router.get("/balance", async (req, res): Promise<void> => {
   const parsed = GetBalanceQueryParams.safeParse(req.query);
   if (!parsed.success || !isPublicKey(parsed.data.address)) {
@@ -145,18 +179,7 @@ router.post("/order", async (req, res): Promise<void> => {
   }
 
   try {
-    let pumpCoin: JsonRecord = {};
-    try {
-      const coinResponse = await fetch(
-        `${pumpCoinApi}/${parsed.data.outputMint}`,
-      );
-      if (coinResponse.ok) pumpCoin = await readJson(coinResponse);
-    } catch (error) {
-      req.log.warn(
-        { err: error },
-        "Pump.fun mint lookup failed; trying Jupiter",
-      );
-    }
+    const pumpCoin = await lookupPumpCoin(parsed.data.outputMint, req);
 
     if (pumpCoin.mint === parsed.data.outputMint) {
       const pumpResponse = await fetch(pumpSwapApi, {
@@ -253,6 +276,147 @@ router.post("/order", async (req, res): Promise<void> => {
   } catch (error) {
     req.log.error({ err: error }, "Swap order preparation failed");
     res.status(502).json({ error: "Could not prepare swap transaction" });
+  }
+});
+
+router.post("/sell-order", async (req, res): Promise<void> => {
+  const body = asRecord(req.body);
+  const wallet = stringValue(body.wallet);
+  const inputMint = stringValue(body.inputMint);
+  const percentage =
+    typeof body.percentage === "number" ? body.percentage : Number.NaN;
+
+  if (
+    !wallet ||
+    !inputMint ||
+    !isPublicKey(wallet) ||
+    !isPublicKey(inputMint) ||
+    !Number.isFinite(percentage) ||
+    percentage <= 0 ||
+    percentage > 100
+  ) {
+    res.status(400).json({ error: "Invalid sell order request" });
+    return;
+  }
+
+  try {
+    const rawBalance = await rawTokenBalance(wallet, inputMint);
+
+    if (rawBalance <= 0n) {
+      res.status(400).json({ error: "This wallet has no balance of this token" });
+      return;
+    }
+
+    const percentageBps = BigInt(Math.round(percentage * 100));
+    const amountRaw = (rawBalance * percentageBps) / 10000n;
+
+    if (amountRaw <= 0n) {
+      res.status(400).json({ error: "Sell amount is too small" });
+      return;
+    }
+
+    const pumpCoin = await lookupPumpCoin(inputMint, req);
+
+    if (pumpCoin.mint === inputMint) {
+      const pumpResponse = await fetch(pumpSwapApi, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          inputMint,
+          outputMint: solMint,
+          amount: amountRaw.toString(),
+          user: wallet,
+          slippagePct: 2,
+          encoding: "base64",
+        }),
+      });
+
+      const payload = await readJson(pumpResponse);
+      const transaction = stringValue(payload.transaction);
+
+      if (!pumpResponse.ok || !transaction) {
+        res.status(pumpResponse.status || 502).json({
+          error:
+            stringValue(payload.error) ??
+            stringValue(payload.message) ??
+            "Pump.fun could not build the sell transaction",
+        });
+        return;
+      }
+
+      res.json(
+        PrepareOrderResponse.parse({
+          provider: "pump",
+          transaction,
+          router: pumpCoin.complete
+            ? "PumpSwap"
+            : "Pump Bonding Curve",
+        }),
+      );
+      return;
+    }
+
+    const headers = jupiterHeaders();
+    if (!headers) {
+      res.status(503).json({
+        error:
+          "This mint was not detected as a Pump.fun token. Add JUPITER_API_KEY in Replit Secrets for Jupiter routing.",
+      });
+      return;
+    }
+
+    const params = new URLSearchParams({
+      inputMint,
+      outputMint: solMint,
+      amount: amountRaw.toString(),
+      taker: wallet,
+    });
+
+    const response = await fetch(`${jupiterBase}/order?${params}`, {
+      headers,
+    });
+    const payload = await readJson(response);
+
+    if (!response.ok) {
+      res.status(response.status).json({
+        error:
+          stringValue(payload.errorMessage) ??
+          stringValue(payload.error) ??
+          `Jupiter sell /order failed (${response.status})`,
+      });
+      return;
+    }
+
+    const transaction = stringValue(payload.transaction);
+
+    if (!transaction) {
+      res.status(422).json({
+        error:
+          stringValue(payload.errorMessage) ??
+          "Jupiter could quote this sell but could not build a transaction",
+        router: payload.router ?? null,
+        errorCode: payload.errorCode ?? null,
+      });
+      return;
+    }
+
+    res.json(
+      PrepareOrderResponse.parse({
+        provider: "jupiter",
+        requestId: payload.requestId ?? null,
+        transaction,
+        outAmount: payload.outAmount ?? null,
+        router: payload.router ?? null,
+        mode: payload.mode ?? null,
+        feeBps: payload.feeBps ?? null,
+        feeMint: payload.feeMint ?? null,
+        expireAt: payload.expireAt ?? null,
+        lastValidBlockHeight: payload.lastValidBlockHeight ?? null,
+      }),
+    );
+  } catch (error) {
+    req.log.error({ err: error }, "Sell order preparation failed");
+    res.status(502).json({ error: "Could not prepare sell transaction" });
   }
 });
 
