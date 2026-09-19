@@ -40,6 +40,7 @@ const rpcUrl = normalizedRpcUrl();
 export const executionConnection = new Connection(rpcUrl, "confirmed");
 
 const jupiterBase = "https://api.jup.ag/swap/v2";
+const jupiterPriceBase = "https://api.jup.ag/price/v3";
 const pumpSwapApi = "https://fun-block.pump.fun/agents/swap";
 const pumpCoinApi = "https://frontend-api-v3.pump.fun/coins-v2";
 const solMint = "So11111111111111111111111111111111111111112";
@@ -76,6 +77,36 @@ async function readJson(response: globalThis.Response): Promise<JsonRecord> {
 function jupiterHeaders(): Record<string, string> | null {
   const key = process.env.JUPITER_API_KEY;
   return key ? { "x-api-key": key } : null;
+}
+
+export async function currentSolUsd(): Promise<number> {
+  const headers = jupiterHeaders();
+  if (!headers) {
+    throw new Error("JUPITER_API_KEY is not configured");
+  }
+
+  const response = await fetch(
+    `${jupiterPriceBase}?ids=${encodeURIComponent(solMint)}`,
+    { headers },
+  );
+
+  const payload = await readJson(response);
+
+  if (!response.ok) {
+    throw new Error(
+      stringValue(payload.error) ??
+        `Jupiter SOL/USD price failed (${response.status})`,
+    );
+  }
+
+  const sol = asRecord(payload[solMint]);
+  const usdPrice = numberValue(sol.usdPrice);
+
+  if (usdPrice == null || usdPrice <= 0) {
+    throw new Error("SOL/USD price is unavailable");
+  }
+
+  return usdPrice;
 }
 
 async function pumpCoin(mint: string): Promise<JsonRecord> {

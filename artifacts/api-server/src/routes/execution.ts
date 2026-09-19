@@ -10,6 +10,7 @@ import {
 import { encryptSecret, decryptSecret } from "../lib/execution-vault";
 import {
   currentPriceSol,
+  currentSolUsd,
   executeBuy,
   executeSellPercent,
   walletSolBalance,
@@ -116,6 +117,21 @@ async function restoreStrategyAfterManualFailure(
     .where(eq(executionStrategiesTable.id, strategy.id));
 }
 
+
+router.get("/execution/sol-usd", async (req, res): Promise<void> => {
+  try {
+    const usdPrice = await currentSolUsd();
+    res.json({ usdPrice });
+  } catch (error) {
+    req.log.error({ err: error }, "SOL/USD price request failed");
+    res.status(503).json({
+      error:
+        error instanceof Error
+          ? error.message
+          : "SOL/USD price is unavailable",
+    });
+  }
+});
 
 router.get("/execution/wallets", async (_req, res): Promise<void> => {
   const wallets = await db

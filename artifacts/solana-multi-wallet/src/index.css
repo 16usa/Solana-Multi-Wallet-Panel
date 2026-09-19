@@ -501,3 +501,65 @@ html[data-theme='dark'] .pnl-summary-split {
 html[data-theme='dark'] .pnl-summary-split b {
   color:#aaa;
 }
+
+
+/* v7.2 SOL / USD global display toggle */
+.currency-toggle {
+  height:20px;
+  min-width:58px;
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  align-items:center;
+  border:1px solid #d7d7d7;
+  border-radius:999px;
+  background:#f4f4f4;
+  padding:2px;
+  color:#777;
+  font-size:6px;
+  font-weight:750;
+  line-height:1;
+}
+
+.currency-toggle span {
+  height:14px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:999px;
+}
+
+.currency-toggle span:first-child {
+  background:#111;
+  color:#fff;
+}
+
+.currency-toggle.usd span:first-child {
+  background:transparent;
+  color:#777;
+}
+
+.currency-toggle.usd span:last-child {
+  background:#111;
+  color:#fff;
+}
+
+html[data-theme='dark'] .currency-toggle {
+  background:#090909;
+  border-color:#3b3b3b;
+  color:#777;
+}
+
+html[data-theme='dark'] .currency-toggle span:first-child {
+  background:#fff;
+  color:#000;
+}
+
+html[data-theme='dark'] .currency-toggle.usd span:first-child {
+  background:transparent;
+  color:#777;
+}
+
+html[data-theme='dark'] .currency-toggle.usd span:last-child {
+  background:#fff;
+  color:#000;
+}

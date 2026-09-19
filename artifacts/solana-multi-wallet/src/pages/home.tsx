@@ -4,6 +4,10 @@ import { validateMint } from '@workspace/api-client-react';
 const WITHDRAWAL_STORAGE_KEY = 'multi-wallet:withdrawal-address:v1';
 const THEME_STORAGE_KEY = 'multi-wallet:theme:v1';
 const TRADE_DRAFTS_STORAGE_KEY = 'multi-wallet:trade-drafts:v1';
+const CURRENCY_STORAGE_KEY = 'multi-wallet:currency:v1';
+const BUY_AMOUNT_STORAGE_KEY = 'multi-wallet:buy-amount:v1';
+
+type CurrencyMode = 'sol' | 'usd';
 
 type Strategy = {
   enabled: boolean;
@@ -51,14 +55,6 @@ const short = (value: string) =>
 const numberText = (value: number | null | undefined, digits = 4) =>
   value == null || !Number.isFinite(value) ? '—' : value.toFixed(digits);
 
-const signedSolText = (
-  value: number | null | undefined,
-  digits = 4,
-) =>
-  value == null || !Number.isFinite(value)
-    ? '—'
-    : `${value > 0 ? '+' : ''}${value.toFixed(digits)} SOL`;
-
 const signedPctText = (
   value: number | null | undefined,
   digits = 2,
@@ -77,6 +73,11 @@ export default function Home() {
     const saved = localStorage.getItem(THEME_STORAGE_KEY);
     return saved === 'dark' ? 'dark' : 'light';
   });
+  const [currency, setCurrency] = useState<CurrencyMode>(() => {
+    const saved = localStorage.getItem(CURRENCY_STORAGE_KEY);
+    return saved === 'usd' ? 'usd' : 'sol';
+  });
+  const [solUsd, setSolUsd] = useState<number | null>(null);
 
   const [wallets, setWallets] = useState<WalletRow[]>([]);
   const [mint, setMint] = useState('');
@@ -85,7 +86,9 @@ export default function Home() {
   const [priceError, setPriceError] = useState('');
   const [pnlSummary, setPnlSummary] = useState<PnlSummary | null>(null);
 
-  const [buyAmount, setBuyAmount] = useState('0.01');
+  const [buyAmount, setBuyAmount] = useState(
+    () => localStorage.getItem(BUY_AMOUNT_STORAGE_KEY) || '0.01',
+  );
   const [sellPct, setSellPct] = useState('100');
 
   const [tradeDrafts, setTradeDrafts] = useState<
@@ -145,6 +148,18 @@ export default function Home() {
     if (!unlocked || !token) return;
 
     try {
+      const priceData = await api('/api/execution/sol-usd');
+      const nextSolUsd = Number(priceData.usdPrice);
+      setSolUsd(
+        Number.isFinite(nextSolUsd) && nextSolUsd > 0
+          ? nextSolUsd
+          : null,
+      );
+    } catch {
+      setSolUsd(null);
+    }
+
+    try {
       if (mintState.status === 'valid' && mint.trim()) {
         const data = await api(
           `/api/execution/state?mint=${encodeURIComponent(mint.trim())}`,
@@ -196,6 +211,14 @@ export default function Home() {
   }, [theme]);
 
   useEffect(() => {
+    localStorage.setItem(CURRENCY_STORAGE_KEY, currency);
+  }, [currency]);
+
+  useEffect(() => {
+    localStorage.setItem(BUY_AMOUNT_STORAGE_KEY, buyAmount);
+  }, [buyAmount]);
+
+  useEffect(() => {
     localStorage.setItem(
       TRADE_DRAFTS_STORAGE_KEY,
       JSON.stringify(tradeDrafts),
@@ -217,6 +240,127 @@ export default function Home() {
     () => wallets.filter((w) => w.enabled).length,
     [wallets],
   );
+
+  const moneyUnit = currency === 'usd' ? 'USD' : 'SOL';
+
+  function trimAmount(value: number, digits: number) {
+    return value
+      .toFixed(digits)
+      .replace(/\.?0+$/, '');
+  }
+
+  function convertInputAmount(
+    value: string,
+    from: CurrencyMode,
+    to: CurrencyMode,
+  ) {
+    if (from === to || !value) return value;
+
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 0 || !solUsd) {
+      return value;
+    }
+
+    return to === 'usd'
+      ? trimAmount(numeric * solUsd, 2)
+      : trimAmount(numeric / solUsd, 6);
+  }
+
+  function amountInputToSol(value: string): number | null {
+    const numeric = Number(value);
+
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+      return null;
+    }
+
+    if (currency === 'usd') {
+      if (!solUsd || solUsd <= 0) return null;
+      return numeric / solUsd;
+    }
+
+    return numeric;
+  }
+
+  function moneyText(
+    solValue: number | null | undefined,
+    signed = false,
+  ) {
+    if (
+      solValue == null ||
+      !Number.isFinite(solValue)
+    ) {
+      return '—';
+    }
+
+    if (currency === 'usd') {
+      if (!solUsd) return '—';
+      const usd = solValue * solUsd;
+      return `${signed && usd > 0 ? '+' : ''}$${usd.toFixed(2)}`;
+    }
+
+    return `${signed && solValue > 0 ? '+' : ''}${solValue.toFixed(4)} SOL`;
+  }
+
+  function tokenPriceText(
+    solValue: number | null | undefined,
+  ) {
+    if (
+      solValue == null ||
+      !Number.isFinite(solValue)
+    ) {
+      return '—';
+    }
+
+    if (currency === 'usd') {
+      if (!solUsd) return '—';
+      const usd = solValue * solUsd;
+      return `$${usd.toExponential(3)}`;
+    }
+
+    return `${solValue.toExponential(3)} SOL`;
+  }
+
+  function switchCurrency() {
+    const next: CurrencyMode =
+      currency === 'sol' ? 'usd' : 'sol';
+
+    if (!solUsd) {
+      setNotice(
+        'Live SOL/USD price is unavailable. Try again in a moment.',
+      );
+      return;
+    }
+
+    setBuyAmount((value) =>
+      convertInputAmount(value, currency, next),
+    );
+
+    setTradeDrafts((prev) => {
+      const converted: typeof prev = {};
+
+      for (const [address, draft] of Object.entries(prev)) {
+        converted[address] = {
+          ...draft,
+          buyAmount: convertInputAmount(
+            draft.buyAmount,
+            currency,
+            next,
+          ),
+        };
+      }
+
+      return converted;
+    });
+
+    if (!withdrawMax && withdrawAmount) {
+      setWithdrawAmount((value) =>
+        convertInputAmount(value, currency, next),
+      );
+    }
+
+    setCurrency(next);
+    setNotice('');
+  }
 
   function unlock() {
     const value = tokenInput.trim();
@@ -368,18 +512,32 @@ export default function Home() {
   async function withdrawFromWallet(wallet: WalletRow) {
     const to = withdrawAddress.trim();
     const amount = Number(withdrawAmount);
+    const amountSol = amountInputToSol(withdrawAmount);
 
     if (!to) {
       setNotice('Enter a withdrawal address.');
       return;
     }
 
-    if (!withdrawMax && (!Number.isFinite(amount) || amount <= 0)) {
-      setNotice('Enter a valid SOL amount or choose MAX.');
+    if (
+      !withdrawMax &&
+      (
+        !Number.isFinite(amount) ||
+        amount <= 0 ||
+        amountSol == null
+      )
+    ) {
+      setNotice(
+        `Enter a valid ${moneyUnit} amount or choose MAX.`,
+      );
       return;
     }
 
-    const label = withdrawMax ? 'MAX' : `${amount} SOL`;
+    const label = withdrawMax
+      ? 'MAX'
+      : currency === 'usd'
+        ? `$${amount.toFixed(2)}`
+        : `${amount} SOL`;
     const confirmed = window.confirm(
       `Withdraw ${label} from ${short(wallet.address)} to ${short(to)}?`,
     );
@@ -395,13 +553,13 @@ export default function Home() {
         body: JSON.stringify({
           address: wallet.address,
           to,
-          amountSol: withdrawMax ? undefined : amount,
+          amountSol: withdrawMax ? undefined : amountSol,
           max: withdrawMax,
         }),
       });
 
       setNotice(
-        `Withdrawal confirmed · ${data.amountSol.toFixed(6)} SOL · ${data.signature}`,
+        `Withdrawal confirmed · ${moneyText(data.amountSol)} · ${data.signature}`,
       );
       closeFunds();
       await refresh();
@@ -572,12 +730,19 @@ export default function Home() {
       sellPct,
     };
 
-    const walletBuyAmount = Number(walletTrade.buyAmount);
+    const walletBuyValue = Number(walletTrade.buyAmount);
+    const walletBuyAmount = amountInputToSol(
+      walletTrade.buyAmount,
+    );
     const walletSellPct = Number(walletTrade.sellPct);
 
     if (
       side === 'buy' &&
-      (!Number.isFinite(walletBuyAmount) || walletBuyAmount <= 0)
+      (
+        !Number.isFinite(walletBuyValue) ||
+        walletBuyValue <= 0 ||
+        walletBuyAmount == null
+      )
     ) {
       setNotice(`Enter a valid BUY amount for ${short(address)}.`);
       return;
@@ -628,6 +793,16 @@ export default function Home() {
       return;
     }
 
+    const buyAmountSol = amountInputToSol(buyAmount);
+
+    if (
+      side === 'buy' &&
+      buyAmountSol == null
+    ) {
+      setNotice(`Enter a valid ${moneyUnit} BUY ALL amount.`);
+      return;
+    }
+
     setBusy(`all:${side}`);
     setNotice('');
 
@@ -637,7 +812,7 @@ export default function Home() {
         body: JSON.stringify({
           mint: mint.trim(),
           side,
-          amountSol: Number(buyAmount),
+          amountSol: buyAmountSol,
           sellPct: Number(sellPct),
         }),
       });
@@ -780,6 +955,20 @@ export default function Home() {
           >
             <span />
           </button>
+          <button
+            className={`currency-toggle ${currency === 'usd' ? 'usd' : ''}`}
+            onClick={switchCurrency}
+            aria-label={
+              currency === 'usd'
+                ? 'Show amounts in SOL'
+                : 'Show amounts in USD'
+            }
+            aria-pressed={currency === 'usd'}
+            title={`Display in ${currency === 'usd' ? 'SOL' : 'USD'}`}
+          >
+            <span>SOL</span>
+            <span>USD</span>
+          </button>
           </div>
           <p>
             Enter your private panel access token. This is not a wallet seed
@@ -822,6 +1011,20 @@ export default function Home() {
             title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
           >
             <span />
+          </button>
+          <button
+            className={`currency-toggle ${currency === 'usd' ? 'usd' : ''}`}
+            onClick={switchCurrency}
+            aria-label={
+              currency === 'usd'
+                ? 'Show amounts in SOL'
+                : 'Show amounts in USD'
+            }
+            aria-pressed={currency === 'usd'}
+            title={`Display in ${currency === 'usd' ? 'SOL' : 'USD'}`}
+          >
+            <span>SOL</span>
+            <span>USD</span>
           </button>
           </div>
           <div className="topbar-actions">
@@ -888,7 +1091,7 @@ export default function Home() {
                       <strong title={wallet.address}>
                         {short(wallet.address)}
                       </strong>
-                      <span>{numberText(wallet.sol)} SOL</span>
+                      <span>{moneyText(wallet.sol)}</span>
                     </div>
 
                     <div className="wallet-tools">
@@ -941,7 +1144,7 @@ export default function Home() {
                         }
                         aria-label={`Buy amount for ${wallet.address}`}
                       />
-                      <b>SOL</b>
+                      <b>{moneyUnit}</b>
                     </div>
 
                     <button
@@ -1073,7 +1276,7 @@ export default function Home() {
                     <span>
                       ENTRY{' '}
                       {wallet.strategy?.entryPriceSol
-                        ? wallet.strategy.entryPriceSol.toExponential(3)
+                        ? tokenPriceText(wallet.strategy.entryPriceSol)
                         : '—'}
                     </span>
                     <strong>
@@ -1121,7 +1324,7 @@ export default function Home() {
               `Valid SPL mint · ${mintState.decimals} decimals`}
             {mintState.status === 'error' && mintState.message}
             {priceSol != null &&
-              ` · ${priceSol.toExponential(3)} SOL/token`}
+              ` · ${tokenPriceText(priceSol)}/token`}
             {priceError && ` · ${priceError}`}
           </div>
         </section>
@@ -1133,7 +1336,7 @@ export default function Home() {
             <div className="pnl-summary-main">
               <span>TOTAL P&amp;L</span>
               <strong>
-                {signedSolText(pnlSummary?.totalPnlSol)}
+                {moneyText(pnlSummary?.totalPnlSol, true)}
                 <b>{signedPctText(pnlSummary?.totalPnlPct)}</b>
               </strong>
             </div>
@@ -1141,11 +1344,11 @@ export default function Home() {
             <div className="pnl-summary-split">
               <span>
                 REALIZED
-                <b>{signedSolText(pnlSummary?.realizedPnlSol)}</b>
+                <b>{moneyText(pnlSummary?.realizedPnlSol, true)}</b>
               </span>
               <span>
                 UNREALIZED
-                <b>{signedSolText(pnlSummary?.unrealizedPnlSol)}</b>
+                <b>{moneyText(pnlSummary?.unrealizedPnlSol, true)}</b>
               </span>
             </div>
           </div>
@@ -1153,7 +1356,7 @@ export default function Home() {
           <div className="global-grid">
             <label>
               Buy / wallet
-              <div><input value={buyAmount} onChange={(e) => setBuyAmount(e.target.value.replace(/[^0-9.]/g, ''))} /><b>SOL</b></div>
+              <div><input value={buyAmount} onChange={(e) => setBuyAmount(e.target.value.replace(/[^0-9.]/g, ''))} /><b>{moneyUnit}</b></div>
             </label>
 
             <label>
@@ -1223,7 +1426,7 @@ export default function Home() {
                   </strong>
                   <span>
                     {menuWallet
-                      ? `${numberText(menuWallet.sol)} SOL`
+                      ? moneyText(menuWallet.sol)
                       : `${wallets.length} execution wallets`}
                   </span>
                 </div>
@@ -1276,7 +1479,7 @@ export default function Home() {
                         }}
                         placeholder="0.00"
                       />
-                      <span>SOL</span>
+                      <span>{moneyUnit}</span>
                     </div>
                   </div>
 
