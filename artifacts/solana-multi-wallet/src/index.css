@@ -563,3 +563,296 @@ html[data-theme='dark'] .currency-toggle.usd span:last-child {
   background:#fff;
   color:#000;
 }
+
+
+/* v7.3 copy trading */
+.copy-open-button {
+  height:24px;
+  border:1px solid #d8d8d8;
+  border-radius:7px;
+  background:#fff;
+  color:#111;
+  padding:0 7px;
+  font-size:7px;
+  font-weight:800;
+}
+.copy-open-button.on {
+  border-color:#111;
+}
+.copy-sheet {
+  max-height:88vh;
+  overflow-y:auto;
+}
+.copy-head-actions {
+  display:flex;
+  align-items:center;
+  gap:7px;
+}
+.copy-master,
+.copy-chip {
+  height:24px;
+  border:1px solid #d8d8d8;
+  border-radius:7px;
+  background:#fff;
+  color:#777;
+  padding:0 8px;
+  font-size:7px;
+  font-weight:800;
+}
+.copy-master.on,
+.copy-chip.on {
+  background:#111;
+  color:#fff;
+  border-color:#111;
+}
+.copy-add {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:7px;
+  padding-top:12px;
+}
+.copy-add button {
+  height:36px;
+  border:1px solid #111;
+  border-radius:8px;
+  background:#111;
+  color:#fff;
+  padding:0 11px;
+  font-size:8px;
+  font-weight:800;
+}
+.copy-source {
+  margin-top:12px;
+  padding-top:12px;
+  border-top:1px solid #ededed;
+}
+.copy-source-head {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+}
+.copy-source-head>div {
+  display:flex;
+  align-items:center;
+  gap:7px;
+}
+.copy-source-head strong {
+  font-size:11px;
+}
+.copy-source-head span {
+  color:#888;
+  font-size:7px;
+}
+.copy-delete {
+  width:24px;
+  height:24px;
+  border:0;
+  background:transparent;
+  color:#777;
+  font-size:18px;
+  line-height:1;
+}
+.copy-mode {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:6px;
+  margin-top:9px;
+}
+.copy-mode button {
+  height:30px;
+  border:1px solid #d8d8d8;
+  border-radius:7px;
+  background:#fff;
+  font-size:7px;
+  font-weight:800;
+}
+.copy-mode button.selected {
+  background:#111;
+  color:#fff;
+  border-color:#111;
+}
+.copy-switches {
+  display:flex;
+  align-items:center;
+  gap:14px;
+  margin-top:9px;
+  font-size:7px;
+  font-weight:750;
+}
+.copy-switches label {
+  display:flex;
+  align-items:center;
+  gap:5px;
+}
+.copy-switches input {
+  width:14px;
+  height:14px;
+  padding:0;
+}
+.copy-settings {
+  display:grid;
+  grid-template-columns:1.3fr 1fr 1fr;
+  gap:7px;
+  margin-top:9px;
+}
+.copy-settings>label {
+  color:#777;
+  font-size:7px;
+}
+.copy-settings>label>div {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:center;
+  gap:3px;
+  margin-top:3px;
+}
+.copy-settings input,
+.copy-settings select {
+  width:100%;
+  height:30px;
+  border:1px solid #dedede;
+  border-radius:7px;
+  background:#fff;
+  padding:0 6px;
+  font-size:9px;
+}
+.copy-settings select {
+  width:52px;
+  padding:0 4px;
+}
+.copy-settings b {
+  font-size:7px;
+  font-weight:600;
+}
+.copy-auto-grid {
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:5px;
+  margin-top:9px;
+}
+.copy-auto-grid label {
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr) auto;
+  align-items:center;
+  gap:3px;
+  color:#777;
+  font-size:7px;
+}
+.copy-auto-grid input {
+  width:100%;
+  height:28px;
+  padding:0 4px;
+  text-align:right;
+  font-size:9px;
+}
+.copy-target-title {
+  margin-top:12px;
+  color:#777;
+  font-size:7px;
+  font-weight:800;
+  letter-spacing:.05em;
+}
+.copy-targets {
+  margin-top:5px;
+  border-top:1px solid #ededed;
+}
+.copy-target {
+  display:grid;
+  grid-template-columns:18px minmax(0,1fr) 72px 50px;
+  gap:6px;
+  align-items:center;
+  min-height:36px;
+  border-bottom:1px solid #ededed;
+}
+.copy-target.disabled {
+  opacity:.42;
+}
+.copy-target>input[type='checkbox'] {
+  width:14px;
+  height:14px;
+  padding:0;
+}
+.copy-target strong {
+  font-size:8px;
+}
+.copy-target>input:not([type='checkbox']),
+.copy-target select {
+  width:100%;
+  height:27px;
+  border:1px solid #dedede;
+  border-radius:6px;
+  background:#fff;
+  padding:0 5px;
+  font-size:8px;
+}
+.copy-note {
+  margin:8px 0 0;
+  color:#888;
+  font-size:7.5px;
+  line-height:1.35;
+}
+.copy-history {
+  margin-top:14px;
+  padding-top:2px;
+  border-top:1px solid #ededed;
+}
+.copy-history-row {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  min-height:38px;
+  border-bottom:1px solid #ededed;
+}
+.copy-history-row>div {
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+.copy-history-row strong {
+  font-size:8px;
+}
+.copy-history-row span {
+  color:#888;
+  font-size:7px;
+}
+.copy-history-row>b {
+  font-size:7px;
+  white-space:nowrap;
+}
+html[data-theme='dark'] .copy-open-button,
+html[data-theme='dark'] .copy-master,
+html[data-theme='dark'] .copy-chip,
+html[data-theme='dark'] .copy-mode button,
+html[data-theme='dark'] .copy-settings input,
+html[data-theme='dark'] .copy-settings select,
+html[data-theme='dark'] .copy-target>input:not([type='checkbox']),
+html[data-theme='dark'] .copy-target select {
+  background:#000;
+  color:#fff;
+  border-color:#444;
+}
+html[data-theme='dark'] .copy-open-button.on,
+html[data-theme='dark'] .copy-master.on,
+html[data-theme='dark'] .copy-chip.on,
+html[data-theme='dark'] .copy-mode button.selected {
+  background:#fff;
+  color:#000;
+  border-color:#fff;
+}
+html[data-theme='dark'] .copy-source,
+html[data-theme='dark'] .copy-targets,
+html[data-theme='dark'] .copy-target,
+html[data-theme='dark'] .copy-history,
+html[data-theme='dark'] .copy-history-row {
+  border-color:#262626;
+}
+html[data-theme='dark'] .copy-source-head span,
+html[data-theme='dark'] .copy-settings>label,
+html[data-theme='dark'] .copy-auto-grid label,
+html[data-theme='dark'] .copy-target-title,
+html[data-theme='dark'] .copy-note,
+html[data-theme='dark'] .copy-history-row span {
+  color:#8d8d8d;
+}

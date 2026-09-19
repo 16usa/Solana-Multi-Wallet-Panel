@@ -49,6 +49,62 @@ type PnlSummary = {
   totalInvestedSol: number;
 };
 
+
+type CopyTarget = {
+  id: string;
+  walletId: string;
+  address: string;
+  walletEnabled: boolean;
+  enabled: boolean;
+  buyAmount: number;
+  buyCurrency: CurrencyMode;
+};
+
+type CopySource = {
+  id: string;
+  address: string;
+  enabled: boolean;
+  copyBuys: boolean;
+  copySells: boolean;
+  mode: 'follow-source' | 'copy-buy-auto';
+  maxBuyAmount: number;
+  maxBuyCurrency: CurrencyMode;
+  slippagePct: number;
+  delayMs: number;
+  autoTpPct: number;
+  autoTpSellPct: number;
+  autoSlPct: number;
+  autoSlSellPct: number;
+  targets: CopyTarget[];
+};
+
+type CopyHistory = {
+  id: string;
+  sourceAddress: string;
+  sourceSignature: string;
+  mint: string;
+  side: 'buy' | 'sell';
+  sourceSellPct?: number | null;
+  status: string;
+  error?: string | null;
+  createdAt: string;
+  executions: Array<{
+    id: string;
+    walletAddress: string;
+    status: string;
+    amountSol?: number | null;
+    sellPct?: number | null;
+    signature?: string | null;
+    error?: string | null;
+  }>;
+};
+
+type CopyState = {
+  enabled: boolean;
+  sources: CopySource[];
+  history: CopyHistory[];
+};
+
 const short = (value: string) =>
   `${value.slice(0, 5)}…${value.slice(-5)}`;
 
@@ -125,6 +181,15 @@ export default function Home() {
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawMax, setWithdrawMax] = useState(false);
 
+
+  const [copyOpen, setCopyOpen] = useState(false);
+  const [copyState, setCopyState] = useState<CopyState>({
+    enabled: false,
+    sources: [],
+    history: [],
+  });
+  const [copySourceInput, setCopySourceInput] = useState('');
+
   const api = useCallback(async (path: string, init?: RequestInit) => {
     const response = await fetch(path, {
       ...init,
@@ -143,6 +208,17 @@ export default function Home() {
 
     return data;
   }, [token]);
+
+  const refreshCopyTrading = useCallback(async () => {
+    if (!unlocked || !token) return;
+
+    try {
+      const data = await api('/api/copy-trading');
+      setCopyState(data);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
+  }, [api, token, unlocked]);
 
   const refresh = useCallback(async () => {
     if (!unlocked || !token) return;
@@ -235,6 +311,18 @@ export default function Home() {
 
     return () => window.clearInterval(timer);
   }, [unlocked, refresh]);
+
+  useEffect(() => {
+    if (!copyOpen || !unlocked) return;
+
+    void refreshCopyTrading();
+
+    const timer = window.setInterval(() => {
+      void refreshCopyTrading();
+    }, 3500);
+
+    return () => window.clearInterval(timer);
+  }, [copyOpen, unlocked, refreshCopyTrading]);
 
   const activeCount = useMemo(
     () => wallets.filter((w) => w.enabled).length,
@@ -489,6 +577,157 @@ export default function Home() {
     }
   }
 
+
+  function openCopyTrading() {
+    setMenuWallet(null);
+    setFundsOpen(false);
+    setCopyOpen(true);
+    setNotice('');
+    void refreshCopyTrading();
+  }
+
+  function closeCopyTrading() {
+    setCopyOpen(false);
+  }
+
+  async function setCopyMaster(enabled: boolean) {
+    setBusy('copy-master');
+
+    try {
+      const data = await api('/api/copy-trading/control', {
+        method: 'POST',
+        body: JSON.stringify({ enabled }),
+      });
+      setCopyState(data);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function addCopySource() {
+    const address = copySourceInput.trim();
+    if (!address) return;
+
+    setBusy('copy-add');
+
+    try {
+      const data = await api('/api/copy-trading/source', {
+        method: 'POST',
+        body: JSON.stringify({ address }),
+      });
+      setCopyState(data);
+      setCopySourceInput('');
+      setNotice(`Copy source added · ${short(address)}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  function changeCopySource(
+    sourceId: string,
+    key: keyof CopySource,
+    value: any,
+  ) {
+    setCopyState((prev) => ({
+      ...prev,
+      sources: prev.sources.map((source) =>
+        source.id === sourceId
+          ? { ...source, [key]: value }
+          : source,
+      ),
+    }));
+  }
+
+  function changeCopyTarget(
+    sourceId: string,
+    walletId: string,
+    key: keyof CopyTarget,
+    value: any,
+  ) {
+    setCopyState((prev) => ({
+      ...prev,
+      sources: prev.sources.map((source) =>
+        source.id === sourceId
+          ? {
+              ...source,
+              targets: source.targets.map((target) =>
+                target.walletId === walletId
+                  ? { ...target, [key]: value }
+                  : target,
+              ),
+            }
+          : source,
+      ),
+    }));
+  }
+
+  async function saveCopySource(source: CopySource) {
+    setBusy(`copy-save:${source.id}`);
+
+    try {
+      const data = await api(
+        `/api/copy-trading/source/${encodeURIComponent(source.id)}`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            enabled: source.enabled,
+            copyBuys: source.copyBuys,
+            copySells: source.copySells,
+            mode: source.mode,
+            maxBuyAmount: Number(source.maxBuyAmount),
+            maxBuyCurrency: source.maxBuyCurrency,
+            slippagePct: Number(source.slippagePct),
+            delayMs: Number(source.delayMs),
+            autoTpPct: Number(source.autoTpPct),
+            autoTpSellPct: Number(source.autoTpSellPct),
+            autoSlPct: Number(source.autoSlPct),
+            autoSlSellPct: Number(source.autoSlSellPct),
+            targets: source.targets.map((target) => ({
+              walletId: target.walletId,
+              enabled: target.enabled,
+              buyAmount: Number(target.buyAmount),
+              buyCurrency: target.buyCurrency,
+            })),
+          }),
+        },
+      );
+
+      setCopyState(data);
+      setNotice(`Copy source saved · ${short(source.address)}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function deleteCopySource(source: CopySource) {
+    if (
+      !window.confirm(
+        `Remove copy source ${short(source.address)}?`,
+      )
+    ) {
+      return;
+    }
+
+    setBusy(`copy-delete:${source.id}`);
+
+    try {
+      const data = await api(
+        `/api/copy-trading/source/${encodeURIComponent(source.id)}`,
+        { method: 'DELETE' },
+      );
+      setCopyState(data);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy('');
+    }
+  }
 
   function openWalletFunds(wallet: WalletRow) {
     setMenuWallet(wallet);
@@ -1050,6 +1289,14 @@ export default function Home() {
           </div>
           <div className="topbar-actions">
             <button
+              className={`copy-open-button ${copyState.enabled ? 'on' : ''}`}
+              onClick={openCopyTrading}
+              aria-label="Copy trading"
+              title="Copy trading"
+            >
+              COPY
+            </button>
+            <button
               className="top-menu-button"
               onClick={openGlobalFunds}
               aria-label="Funds menu"
@@ -1429,6 +1676,410 @@ export default function Home() {
           </p>
         </section>
 
+
+        {copyOpen && (
+          <div className="sheet-overlay" onClick={closeCopyTrading}>
+            <div
+              className="funds-sheet copy-sheet"
+              role="dialog"
+              aria-modal="true"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="sheet-handle" />
+
+              <div className="sheet-head">
+                <div>
+                  <strong>COPY TRADING</strong>
+                  <span>
+                    {copyState.sources.length} source
+                    {copyState.sources.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+
+                <div className="copy-head-actions">
+                  <button
+                    className={`copy-master ${copyState.enabled ? 'on' : ''}`}
+                    onClick={() => setCopyMaster(!copyState.enabled)}
+                    disabled={busy === 'copy-master'}
+                  >
+                    {copyState.enabled ? 'ON' : 'OFF'}
+                  </button>
+                  <button className="sheet-close" onClick={closeCopyTrading}>
+                    ×
+                  </button>
+                </div>
+              </div>
+
+              <div className="copy-add">
+                <input
+                  value={copySourceInput}
+                  onChange={(event) =>
+                    setCopySourceInput(event.target.value)
+                  }
+                  placeholder="Source Solana wallet"
+                  spellCheck="false"
+                />
+                <button
+                  onClick={addCopySource}
+                  disabled={busy === 'copy-add'}
+                >
+                  + ADD
+                </button>
+              </div>
+
+              {copyState.sources.length === 0 && (
+                <p className="sheet-copy">
+                  Add a source wallet. New sources start from the latest
+                  transaction, so old history is not copied.
+                </p>
+              )}
+
+              {copyState.sources.map((source) => (
+                <div className="copy-source" key={source.id}>
+                  <div className="copy-source-head">
+                    <div>
+                      <strong title={source.address}>
+                        {short(source.address)}
+                      </strong>
+                      <span>
+                        {source.enabled ? 'WATCHING' : 'PAUSED'}
+                      </span>
+                    </div>
+
+                    <div>
+                      <button
+                        className={`copy-chip ${source.enabled ? 'on' : ''}`}
+                        onClick={() =>
+                          changeCopySource(
+                            source.id,
+                            'enabled',
+                            !source.enabled,
+                          )
+                        }
+                      >
+                        {source.enabled ? 'ON' : 'OFF'}
+                      </button>
+                      <button
+                        className="copy-delete"
+                        onClick={() => deleteCopySource(source)}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="copy-mode">
+                    <button
+                      className={
+                        source.mode === 'follow-source'
+                          ? 'selected'
+                          : ''
+                      }
+                      onClick={() =>
+                        changeCopySource(
+                          source.id,
+                          'mode',
+                          'follow-source',
+                        )
+                      }
+                    >
+                      FOLLOW SOURCE
+                    </button>
+                    <button
+                      className={
+                        source.mode === 'copy-buy-auto'
+                          ? 'selected'
+                          : ''
+                      }
+                      onClick={() =>
+                        changeCopySource(
+                          source.id,
+                          'mode',
+                          'copy-buy-auto',
+                        )
+                      }
+                    >
+                      COPY BUY + AUTO
+                    </button>
+                  </div>
+
+                  <div className="copy-switches">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={source.copyBuys}
+                        onChange={(event) =>
+                          changeCopySource(
+                            source.id,
+                            'copyBuys',
+                            event.target.checked,
+                          )
+                        }
+                      />
+                      COPY BUY
+                    </label>
+
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={source.copySells}
+                        disabled={source.mode === 'copy-buy-auto'}
+                        onChange={(event) =>
+                          changeCopySource(
+                            source.id,
+                            'copySells',
+                            event.target.checked,
+                          )
+                        }
+                      />
+                      SAME-% SELL
+                    </label>
+                  </div>
+
+                  <div className="copy-settings">
+                    <label>
+                      MAX BUY
+                      <div>
+                        <input
+                          inputMode="decimal"
+                          value={source.maxBuyAmount}
+                          onChange={(event) =>
+                            changeCopySource(
+                              source.id,
+                              'maxBuyAmount',
+                              event.target.value.replace(/[^0-9.]/g, ''),
+                            )
+                          }
+                        />
+                        <select
+                          value={source.maxBuyCurrency}
+                          onChange={(event) =>
+                            changeCopySource(
+                              source.id,
+                              'maxBuyCurrency',
+                              event.target.value,
+                            )
+                          }
+                        >
+                          <option value="sol">SOL</option>
+                          <option value="usd">USD</option>
+                        </select>
+                      </div>
+                    </label>
+
+                    <label>
+                      SLIPPAGE
+                      <div>
+                        <input
+                          inputMode="decimal"
+                          value={source.slippagePct}
+                          onChange={(event) =>
+                            changeCopySource(
+                              source.id,
+                              'slippagePct',
+                              event.target.value.replace(/[^0-9.]/g, ''),
+                            )
+                          }
+                        />
+                        <b>%</b>
+                      </div>
+                    </label>
+
+                    <label>
+                      DELAY
+                      <div>
+                        <input
+                          inputMode="numeric"
+                          value={source.delayMs}
+                          onChange={(event) =>
+                            changeCopySource(
+                              source.id,
+                              'delayMs',
+                              event.target.value.replace(/[^0-9]/g, ''),
+                            )
+                          }
+                        />
+                        <b>MS</b>
+                      </div>
+                    </label>
+                  </div>
+
+                  {source.mode === 'copy-buy-auto' && (
+                    <div className="copy-auto-grid">
+                      <label>
+                        TP
+                        <input
+                          value={source.autoTpPct}
+                          onChange={(event) =>
+                            changeCopySource(
+                              source.id,
+                              'autoTpPct',
+                              event.target.value.replace(/[^0-9.]/g, ''),
+                            )
+                          }
+                        />
+                        %
+                      </label>
+                      <label>
+                        TP SELL
+                        <input
+                          value={source.autoTpSellPct}
+                          onChange={(event) =>
+                            changeCopySource(
+                              source.id,
+                              'autoTpSellPct',
+                              event.target.value.replace(/[^0-9.]/g, ''),
+                            )
+                          }
+                        />
+                        %
+                      </label>
+                      <label>
+                        SL
+                        <input
+                          value={source.autoSlPct}
+                          onChange={(event) =>
+                            changeCopySource(
+                              source.id,
+                              'autoSlPct',
+                              event.target.value.replace(/[^0-9.]/g, ''),
+                            )
+                          }
+                        />
+                        %
+                      </label>
+                      <label>
+                        SL SELL
+                        <input
+                          value={source.autoSlSellPct}
+                          onChange={(event) =>
+                            changeCopySource(
+                              source.id,
+                              'autoSlSellPct',
+                              event.target.value.replace(/[^0-9.]/g, ''),
+                            )
+                          }
+                        />
+                        %
+                      </label>
+                    </div>
+                  )}
+
+                  <div className="copy-target-title">
+                    EXECUTION WALLETS
+                  </div>
+
+                  <div className="copy-targets">
+                    {source.targets.map((target) => (
+                      <div
+                        className={`copy-target ${
+                          target.walletEnabled ? '' : 'disabled'
+                        }`}
+                        key={target.walletId}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={target.enabled}
+                          disabled={!target.walletEnabled}
+                          onChange={(event) =>
+                            changeCopyTarget(
+                              source.id,
+                              target.walletId,
+                              'enabled',
+                              event.target.checked,
+                            )
+                          }
+                        />
+                        <strong title={target.address}>
+                          {short(target.address)}
+                        </strong>
+                        <input
+                          inputMode="decimal"
+                          value={target.buyAmount}
+                          onChange={(event) =>
+                            changeCopyTarget(
+                              source.id,
+                              target.walletId,
+                              'buyAmount',
+                              event.target.value.replace(/[^0-9.]/g, ''),
+                            )
+                          }
+                        />
+                        <select
+                          value={target.buyCurrency}
+                          onChange={(event) =>
+                            changeCopyTarget(
+                              source.id,
+                              target.walletId,
+                              'buyCurrency',
+                              event.target.value,
+                            )
+                          }
+                        >
+                          <option value="sol">SOL</option>
+                          <option value="usd">USD</option>
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    className="sheet-primary"
+                    onClick={() => saveCopySource(source)}
+                    disabled={busy === `copy-save:${source.id}`}
+                  >
+                    SAVE SOURCE
+                  </button>
+
+                  <p className="copy-note">
+                    FOLLOW SOURCE copies fixed-size buys and the same sell
+                    percentage. COPY BUY + AUTO ignores source sells and uses
+                    this source's TP/SL for exits.
+                  </p>
+                </div>
+              ))}
+
+              <div className="copy-history">
+                <div className="copy-target-title">HISTORY</div>
+
+                {copyState.history.length === 0 && (
+                  <div className="empty">No copied trades yet.</div>
+                )}
+
+                {copyState.history.slice(0, 12).map((event) => {
+                  const copied = event.executions.filter(
+                    (item) => item.status === 'copied',
+                  ).length;
+                  const failed = event.executions.filter(
+                    (item) => item.status === 'failed',
+                  ).length;
+
+                  return (
+                    <div className="copy-history-row" key={event.id}>
+                      <div>
+                        <strong>
+                          {event.side.toUpperCase()} {short(event.mint)}
+                        </strong>
+                        <span>
+                          {short(event.sourceAddress)} · {event.status.toUpperCase()}
+                        </span>
+                      </div>
+                      <b>
+                        {copied} OK
+                        {failed > 0 ? ` · ${failed} FAIL` : ''}
+                      </b>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <p className="sheet-footnote">
+                Copy trading runs on the server. Keep the API deployment
+                online 24/7. Duplicate source signatures are ignored.
+              </p>
+            </div>
+          </div>
+        )}
 
         {(menuWallet || fundsOpen) && (
           <div className="sheet-overlay" onClick={closeFunds}>

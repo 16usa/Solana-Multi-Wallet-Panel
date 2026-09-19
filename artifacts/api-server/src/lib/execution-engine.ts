@@ -267,6 +267,7 @@ async function buildSwap(
   inputMint: string,
   outputMint: string,
   amountRaw: bigint,
+  slippagePct = 2,
 ): Promise<{
   provider: "pump" | "jupiter";
   transaction: string;
@@ -284,7 +285,7 @@ async function buildSwap(
         outputMint,
         amount: amountRaw.toString(),
         user,
-        slippagePct: 2,
+        slippagePct,
         encoding: "base64",
       }),
     });
@@ -523,6 +524,7 @@ export async function executeBuy(
   keypair: Keypair,
   mint: string,
   amountSol: number,
+  slippagePct = 2,
 ): Promise<string> {
   const lamports = Math.round(amountSol * LAMPORTS_PER_SOL);
   if (!Number.isSafeInteger(lamports) || lamports <= 0) {
@@ -534,6 +536,7 @@ export async function executeBuy(
     solMint,
     mint,
     BigInt(lamports),
+    slippagePct,
   );
 
   if (order.provider === "pump") {
@@ -551,6 +554,7 @@ export async function executeSellPercent(
   keypair: Keypair,
   mint: string,
   percentage: number,
+  slippagePct = 2,
 ): Promise<string> {
   if (
     !Number.isFinite(percentage) ||
@@ -581,6 +585,7 @@ export async function executeSellPercent(
     mint,
     solMint,
     amountRaw,
+    slippagePct,
   );
 
   if (order.provider === "pump") {
