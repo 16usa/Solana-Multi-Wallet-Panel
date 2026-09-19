@@ -253,17 +253,18 @@ export default function Home() {
     value: string,
     from: CurrencyMode,
     to: CurrencyMode,
+    rate = solUsd,
   ) {
     if (from === to || !value) return value;
 
     const numeric = Number(value);
-    if (!Number.isFinite(numeric) || numeric < 0 || !solUsd) {
+    if (!Number.isFinite(numeric) || numeric < 0 || !rate) {
       return value;
     }
 
     return to === 'usd'
-      ? trimAmount(numeric * solUsd, 2)
-      : trimAmount(numeric / solUsd, 6);
+      ? trimAmount(numeric * rate, 2)
+      : trimAmount(numeric / rate, 6);
   }
 
   function amountInputToSol(value: string): number | null {
@@ -320,19 +321,38 @@ export default function Home() {
     return `${solValue.toExponential(3)} SOL`;
   }
 
-  function switchCurrency() {
+  async function switchCurrency() {
     const next: CurrencyMode =
       currency === 'sol' ? 'usd' : 'sol';
 
-    if (!solUsd) {
-      setNotice(
-        'Live SOL/USD price is unavailable. Try again in a moment.',
-      );
+    let rate = solUsd;
+
+    if (!rate) {
+      try {
+        const data = await api('/api/execution/sol-usd');
+        const nextRate = Number(data.usdPrice);
+
+        if (Number.isFinite(nextRate) && nextRate > 0) {
+          rate = nextRate;
+          setSolUsd(nextRate);
+        }
+      } catch (error) {
+        setNotice(
+          error instanceof Error
+            ? error.message
+            : 'Live SOL/USD price is unavailable.',
+        );
+        return;
+      }
+    }
+
+    if (!rate) {
+      setNotice('Live SOL/USD price is unavailable.');
       return;
     }
 
     setBuyAmount((value) =>
-      convertInputAmount(value, currency, next),
+      convertInputAmount(value, currency, next, rate),
     );
 
     setTradeDrafts((prev) => {
@@ -345,6 +365,7 @@ export default function Home() {
             draft.buyAmount,
             currency,
             next,
+            rate,
           ),
         };
       }
@@ -354,7 +375,7 @@ export default function Home() {
 
     if (!withdrawMax && withdrawAmount) {
       setWithdrawAmount((value) =>
-        convertInputAmount(value, currency, next),
+        convertInputAmount(value, currency, next, rate),
       );
     }
 

@@ -80,33 +80,100 @@ function jupiterHeaders(): Record<string, string> | null {
 }
 
 export async function currentSolUsd(): Promise<number> {
+  const errors: string[] = [];
+
   const headers = jupiterHeaders();
-  if (!headers) {
-    throw new Error("JUPITER_API_KEY is not configured");
+
+  if (headers) {
+    try {
+      const response = await fetch(
+        `${jupiterPriceBase}?ids=${encodeURIComponent(solMint)}`,
+        { headers },
+      );
+
+      const payload = await readJson(response);
+
+      if (response.ok) {
+        const sol = asRecord(payload[solMint]);
+        const usdPrice = numberValue(sol.usdPrice);
+
+        if (usdPrice != null && usdPrice > 0) {
+          return usdPrice;
+        }
+      }
+
+      errors.push(
+        stringValue(payload.error) ??
+          `Jupiter ${response.status}`,
+      );
+    } catch (error) {
+      errors.push(
+        error instanceof Error
+          ? `Jupiter: ${error.message}`
+          : "Jupiter failed",
+      );
+    }
   }
 
-  const response = await fetch(
-    `${jupiterPriceBase}?ids=${encodeURIComponent(solMint)}`,
-    { headers },
-  );
+  try {
+    const response = await fetch(
+      "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd",
+      {
+        headers: {
+          accept: "application/json",
+          "user-agent": "Solana-Multi-Wallet-Panel/1.0",
+        },
+      },
+    );
 
-  const payload = await readJson(response);
+    const payload = await readJson(response);
+    const solana = asRecord(payload.solana);
+    const usdPrice = numberValue(solana.usd);
 
-  if (!response.ok) {
-    throw new Error(
-      stringValue(payload.error) ??
-        `Jupiter SOL/USD price failed (${response.status})`,
+    if (response.ok && usdPrice != null && usdPrice > 0) {
+      return usdPrice;
+    }
+
+    errors.push(`CoinGecko ${response.status}`);
+  } catch (error) {
+    errors.push(
+      error instanceof Error
+        ? `CoinGecko: ${error.message}`
+        : "CoinGecko failed",
     );
   }
 
-  const sol = asRecord(payload[solMint]);
-  const usdPrice = numberValue(sol.usdPrice);
+  try {
+    const response = await fetch(
+      "https://api.coinbase.com/v2/prices/SOL-USD/spot",
+      {
+        headers: {
+          accept: "application/json",
+          "user-agent": "Solana-Multi-Wallet-Panel/1.0",
+        },
+      },
+    );
 
-  if (usdPrice == null || usdPrice <= 0) {
-    throw new Error("SOL/USD price is unavailable");
+    const payload = await readJson(response);
+    const data = asRecord(payload.data);
+    const usdPrice = numberValue(data.amount);
+
+    if (response.ok && usdPrice != null && usdPrice > 0) {
+      return usdPrice;
+    }
+
+    errors.push(`Coinbase ${response.status}`);
+  } catch (error) {
+    errors.push(
+      error instanceof Error
+        ? `Coinbase: ${error.message}`
+        : "Coinbase failed",
+    );
   }
 
-  return usdPrice;
+  throw new Error(
+    `SOL/USD price is unavailable${errors.length ? ` · ${errors.join(" · ")}` : ""}`,
+  );
 }
 
 async function pumpCoin(mint: string): Promise<JsonRecord> {
