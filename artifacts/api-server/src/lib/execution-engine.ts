@@ -3,6 +3,8 @@ import {
   Keypair,
   LAMPORTS_PER_SOL,
   PublicKey,
+  SystemProgram,
+  Transaction,
   VersionedTransaction,
 } from "@solana/web3.js";
 
@@ -394,4 +396,105 @@ export async function executeSellPercent(
     order.requestId!,
     keypair,
   );
+}
+
+
+export async function withdrawSol(
+  keypair: Keypair,
+  destination: string,
+  amountSol?: number,
+  max = false,
+): Promise<{ signature: string; amountSol: number }> {
+  const to = new PublicKey(destination);
+
+  if (to.equals(keypair.publicKey)) {
+    throw new Error("Destination cannot be the same wallet");
+  }
+
+  const balance = await executionConnection.getBalance(
+    keypair.publicKey,
+    "confirmed",
+  );
+
+  const latest = await executionConnection.getLatestBlockhash("confirmed");
+
+  const probe = new Transaction({
+    feePayer: keypair.publicKey,
+    recentBlockhash: latest.blockhash,
+  }).add(
+    SystemProgram.transfer({
+      fromPubkey: keypair.publicKey,
+      toPubkey: to,
+      lamports: 1,
+    }),
+  );
+
+  const feeResult = await executionConnection.getFeeForMessage(
+    probe.compileMessage(),
+    "confirmed",
+  );
+
+  const networkFee = feeResult.value ?? 5000;
+  const reserve = networkFee + 5000;
+
+  let lamports: number;
+
+  if (max) {
+    lamports = balance - reserve;
+  } else {
+    const requested = Number(amountSol);
+    lamports = Math.round(requested * LAMPORTS_PER_SOL);
+
+    if (!Number.isFinite(requested) || !Number.isSafeInteger(lamports) || lamports <= 0) {
+      throw new Error("Invalid SOL withdrawal amount");
+    }
+  }
+
+  if (lamports <= 0) {
+    throw new Error("Wallet balance is too low to withdraw after network fee reserve");
+  }
+
+  if (lamports + networkFee > balance) {
+    throw new Error("Insufficient SOL balance for withdrawal and network fee");
+  }
+
+  const tx = new Transaction({
+    feePayer: keypair.publicKey,
+    recentBlockhash: latest.blockhash,
+  }).add(
+    SystemProgram.transfer({
+      fromPubkey: keypair.publicKey,
+      toPubkey: to,
+      lamports,
+    }),
+  );
+
+  tx.sign(keypair);
+
+  const signature = await executionConnection.sendRawTransaction(
+    tx.serialize(),
+    {
+      skipPreflight: false,
+      preflightCommitment: "confirmed",
+      maxRetries: 3,
+    },
+  );
+
+  const confirmation = await executionConnection.confirmTransaction(
+    {
+      signature,
+      blockhash: latest.blockhash,
+      lastValidBlockHeight: latest.lastValidBlockHeight,
+    },
+    "confirmed",
+  );
+
+  if (confirmation.value.err) {
+    throw new Error(JSON.stringify(confirmation.value.err));
+  }
+
+  return {
+    signature,
+    amountSol: lamports / LAMPORTS_PER_SOL,
+  };
 }

@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { validateMint } from '@workspace/api-client-react';
 
+const WITHDRAWAL_STORAGE_KEY = 'multi-wallet:withdrawal-address:v1';
+
 type Strategy = {
   enabled: boolean;
   tpPct: number;
@@ -59,6 +61,14 @@ export default function Home() {
 
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState('');
+
+  const [menuWallet, setMenuWallet] = useState<WalletRow | null>(null);
+  const [fundsOpen, setFundsOpen] = useState(false);
+  const [withdrawAddress, setWithdrawAddress] = useState(
+    () => localStorage.getItem(WITHDRAWAL_STORAGE_KEY) || '',
+  );
+  const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [withdrawMax, setWithdrawMax] = useState(false);
 
   const api = useCallback(async (path: string, init?: RequestInit) => {
     const response = await fetch(path, {
@@ -241,6 +251,130 @@ export default function Home() {
       }
 
       setNotice(`Balance refreshed · ${short(address)}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy('');
+    }
+  }
+
+
+  function openWalletFunds(wallet: WalletRow) {
+    setMenuWallet(wallet);
+    setFundsOpen(false);
+    setWithdrawAddress(
+      localStorage.getItem(WITHDRAWAL_STORAGE_KEY) || withdrawAddress,
+    );
+    setWithdrawAmount('');
+    setWithdrawMax(false);
+    setNotice('');
+  }
+
+  function openGlobalFunds() {
+    setMenuWallet(null);
+    setFundsOpen(true);
+    setWithdrawAddress(
+      localStorage.getItem(WITHDRAWAL_STORAGE_KEY) || withdrawAddress,
+    );
+    setWithdrawAmount('');
+    setWithdrawMax(false);
+    setNotice('');
+  }
+
+  function closeFunds() {
+    setMenuWallet(null);
+    setFundsOpen(false);
+    setWithdrawAmount('');
+    setWithdrawMax(false);
+  }
+
+  function saveWithdrawalAddress() {
+    const value = withdrawAddress.trim();
+    if (!value) {
+      setNotice('Enter a withdrawal address first.');
+      return;
+    }
+
+    localStorage.setItem(WITHDRAWAL_STORAGE_KEY, value);
+    setNotice('Default withdrawal address saved on this device.');
+  }
+
+  async function withdrawFromWallet(wallet: WalletRow) {
+    const to = withdrawAddress.trim();
+    const amount = Number(withdrawAmount);
+
+    if (!to) {
+      setNotice('Enter a withdrawal address.');
+      return;
+    }
+
+    if (!withdrawMax && (!Number.isFinite(amount) || amount <= 0)) {
+      setNotice('Enter a valid SOL amount or choose MAX.');
+      return;
+    }
+
+    const label = withdrawMax ? 'MAX' : `${amount} SOL`;
+    const confirmed = window.confirm(
+      `Withdraw ${label} from ${short(wallet.address)} to ${short(to)}?`,
+    );
+
+    if (!confirmed) return;
+
+    setBusy(`${wallet.address}:withdraw`);
+    setNotice('');
+
+    try {
+      const data = await api('/api/execution/withdraw', {
+        method: 'POST',
+        body: JSON.stringify({
+          address: wallet.address,
+          to,
+          amountSol: withdrawMax ? undefined : amount,
+          max: withdrawMax,
+        }),
+      });
+
+      setNotice(
+        `Withdrawal confirmed · ${data.amountSol.toFixed(6)} SOL · ${data.signature}`,
+      );
+      closeFunds();
+      await refresh();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function withdrawAllWallets() {
+    const to = withdrawAddress.trim();
+
+    if (!to) {
+      setNotice('Enter a withdrawal address.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Withdraw available SOL from all enabled execution wallets to ${short(to)}?`,
+    );
+
+    if (!confirmed) return;
+
+    setBusy('withdraw-all');
+    setNotice('');
+
+    try {
+      const data = await api('/api/execution/withdraw-all', {
+        method: 'POST',
+        body: JSON.stringify({ to }),
+      });
+
+      const ok = (data.results || []).filter((item: any) => item.ok).length;
+      const failed = (data.results || []).length - ok;
+
+      setNotice(`Withdraw all finished · ${ok} success · ${failed} failed`);
+      closeFunds();
+      await refresh();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
     } finally {
@@ -467,7 +601,16 @@ export default function Home() {
       <section className="shell">
         <header className="topbar">
           <h1>24/7 EXECUTION</h1>
-          <button className="link-button" onClick={lock}>LOCK</button>
+          <div className="topbar-actions">
+            <button
+              className="top-menu-button"
+              onClick={openGlobalFunds}
+              aria-label="Funds menu"
+            >
+              •••
+            </button>
+            <button className="link-button" onClick={lock}>LOCK</button>
+          </div>
         </header>
 
         <section className="section">
@@ -533,6 +676,15 @@ export default function Home() {
                         title="Refresh balance"
                       >
                         ↻
+                      </button>
+
+                      <button
+                        className="wallet-tool menu"
+                        onClick={() => openWalletFunds(wallet)}
+                        aria-label="Wallet funds menu"
+                        title="Funds"
+                      >
+                        •••
                       </button>
 
                       <span className="managed">24/7</span>
@@ -761,6 +913,134 @@ export default function Home() {
             Use a Reserved VM deployment so the worker stays online.
           </p>
         </section>
+
+
+        {(menuWallet || fundsOpen) && (
+          <div className="sheet-overlay" onClick={closeFunds}>
+            <div
+              className="funds-sheet"
+              role="dialog"
+              aria-modal="true"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="sheet-handle" />
+
+              <div className="sheet-head">
+                <div>
+                  <strong>
+                    {menuWallet ? short(menuWallet.address) : 'FUNDS'}
+                  </strong>
+                  <span>
+                    {menuWallet
+                      ? `${numberText(menuWallet.sol)} SOL`
+                      : `${wallets.length} execution wallets`}
+                  </span>
+                </div>
+
+                <button className="sheet-close" onClick={closeFunds}>
+                  ×
+                </button>
+              </div>
+
+              <div className="sheet-section">
+                <div className="sheet-label-row">
+                  <span>Withdrawal address</span>
+                  <button onClick={saveWithdrawalAddress}>SAVE DEFAULT</button>
+                </div>
+
+                <input
+                  value={withdrawAddress}
+                  onChange={(event) => setWithdrawAddress(event.target.value)}
+                  placeholder="Solana wallet address"
+                  spellCheck="false"
+                />
+              </div>
+
+              {menuWallet ? (
+                <>
+                  <div className="sheet-section">
+                    <div className="sheet-label-row">
+                      <span>Amount</span>
+                      <button
+                        className={withdrawMax ? 'selected' : ''}
+                        onClick={() => {
+                          setWithdrawMax(true);
+                          setWithdrawAmount('');
+                        }}
+                      >
+                        MAX
+                      </button>
+                    </div>
+
+                    <div className="withdraw-amount-row">
+                      <input
+                        inputMode="decimal"
+                        value={withdrawAmount}
+                        disabled={withdrawMax}
+                        onChange={(event) => {
+                          setWithdrawMax(false);
+                          setWithdrawAmount(
+                            event.target.value.replace(/[^0-9.]/g, ''),
+                          );
+                        }}
+                        placeholder="0.00"
+                      />
+                      <span>SOL</span>
+                    </div>
+                  </div>
+
+                  <button
+                    className="sheet-primary"
+                    onClick={() => withdrawFromWallet(menuWallet)}
+                    disabled={busy === `${menuWallet.address}:withdraw`}
+                  >
+                    {busy === `${menuWallet.address}:withdraw`
+                      ? 'WITHDRAWING…'
+                      : withdrawMax
+                        ? 'WITHDRAW MAX'
+                        : 'WITHDRAW'}
+                  </button>
+
+                  <button
+                    className="sheet-secondary"
+                    onClick={() =>
+                      window.open(
+                        `https://solscan.io/account/${menuWallet.address}`,
+                        '_blank',
+                        'noopener,noreferrer',
+                      )
+                    }
+                  >
+                    VIEW TRANSACTIONS
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="sheet-copy">
+                    Withdraw available SOL from every enabled execution wallet
+                    to the saved destination. Wallets with AUTO enabled are
+                    skipped for safety.
+                  </p>
+
+                  <button
+                    className="sheet-primary"
+                    onClick={withdrawAllWallets}
+                    disabled={busy === 'withdraw-all'}
+                  >
+                    {busy === 'withdraw-all'
+                      ? 'WITHDRAWING…'
+                      : 'WITHDRAW ALL WALLETS'}
+                  </button>
+                </>
+              )}
+
+              <p className="sheet-footnote">
+                MAX leaves a small SOL reserve for the network fee. Disable
+                AUTO before draining a wallet.
+              </p>
+            </div>
+          </div>
+        )}
 
         {notice && <div className="notice">{notice}</div>}
 

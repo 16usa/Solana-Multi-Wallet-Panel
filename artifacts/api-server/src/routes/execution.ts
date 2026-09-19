@@ -13,6 +13,7 @@ import {
   executeBuy,
   executeSellPercent,
   walletSolBalance,
+  withdrawSol,
 } from "../lib/execution-engine";
 
 const router: IRouter = Router();
@@ -401,6 +402,158 @@ router.post("/execution/trade-all", async (req, res): Promise<void> => {
         address: wallet.address,
         ok: true,
         signature,
+      });
+    } catch (error) {
+      results.push({
+        address: wallet.address,
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : String(error),
+      });
+    }
+  }
+
+  res.json({ results });
+});
+
+
+router.post("/execution/withdraw", async (req, res): Promise<void> => {
+  const { address, to, amountSol, max } = req.body ?? {};
+
+  if (
+    typeof address !== "string" ||
+    typeof to !== "string" ||
+    typeof max !== "boolean"
+  ) {
+    res.status(400).json({ error: "Invalid withdrawal request" });
+    return;
+  }
+
+  try {
+    new PublicKey(address);
+    new PublicKey(to);
+  } catch {
+    res.status(400).json({ error: "Invalid Solana address" });
+    return;
+  }
+
+  const wallet = await findWallet(address);
+  if (!wallet || !wallet.enabled) {
+    res.status(404).json({ error: "Execution wallet not found" });
+    return;
+  }
+
+  if (max) {
+    const activeStrategies = await db
+      .select({ id: executionStrategiesTable.id })
+      .from(executionStrategiesTable)
+      .where(
+        and(
+          eq(executionStrategiesTable.walletId, wallet.id),
+          eq(executionStrategiesTable.enabled, true),
+        ),
+      )
+      .limit(1);
+
+    if (activeStrategies.length) {
+      res.status(409).json({
+        error: "Disable AUTO before withdrawing MAX from this wallet",
+      });
+      return;
+    }
+  }
+
+  try {
+    const keypair = Keypair.fromSecretKey(
+      decryptSecret(wallet.encryptedSecret),
+    );
+
+    const result = await withdrawSol(
+      keypair,
+      to,
+      max ? undefined : Number(amountSol),
+      max,
+    );
+
+    res.json({
+      status: "success",
+      address,
+      to,
+      ...result,
+    });
+  } catch (error) {
+    req.log.error({ err: error }, "Managed withdrawal failed");
+    res.status(422).json({
+      error:
+        error instanceof Error
+          ? error.message
+          : "Withdrawal failed",
+    });
+  }
+});
+
+router.post("/execution/withdraw-all", async (req, res): Promise<void> => {
+  const { to } = req.body ?? {};
+
+  if (typeof to !== "string") {
+    res.status(400).json({ error: "Invalid withdrawal-all request" });
+    return;
+  }
+
+  try {
+    new PublicKey(to);
+  } catch {
+    res.status(400).json({ error: "Invalid destination address" });
+    return;
+  }
+
+  const wallets = await db
+    .select()
+    .from(executionWalletsTable)
+    .where(eq(executionWalletsTable.enabled, true));
+
+  const results: Array<Record<string, unknown>> = [];
+
+  for (const wallet of wallets) {
+    try {
+      const activeStrategies = await db
+        .select({ id: executionStrategiesTable.id })
+        .from(executionStrategiesTable)
+        .where(
+          and(
+            eq(executionStrategiesTable.walletId, wallet.id),
+            eq(executionStrategiesTable.enabled, true),
+          ),
+        )
+        .limit(1);
+
+      if (activeStrategies.length) {
+        results.push({
+          address: wallet.address,
+          ok: false,
+          error: "AUTO is enabled; wallet skipped",
+        });
+        continue;
+      }
+
+      const keypair = Keypair.fromSecretKey(
+        decryptSecret(wallet.encryptedSecret),
+      );
+
+      const result = await withdrawSol(
+        keypair,
+        to,
+        undefined,
+        true,
+      );
+
+      results.push({
+        address: wallet.address,
+        ok: true,
+        signature: result.signature,
+        amountSol: result.amountSol,
       });
     } catch (error) {
       results.push({
