@@ -225,3 +225,169 @@ button:disabled { opacity:.35; cursor:default; }
   font-size:8px;
   line-height:1.35;
 }
+
+
+/* v6.6 compact black/white theme toggle */
+.title-with-theme {
+  display:flex;
+  align-items:center;
+  gap:9px;
+  min-width:0;
+}
+
+.theme-toggle {
+  position:relative;
+  width:27px;
+  height:15px;
+  flex:0 0 auto;
+  border:1px solid #cfcfcf;
+  border-radius:999px;
+  background:#f1f1f1;
+  padding:0;
+  transition:background .16s ease, border-color .16s ease;
+}
+
+.theme-toggle span {
+  position:absolute;
+  top:2px;
+  left:2px;
+  width:9px;
+  height:9px;
+  border-radius:50%;
+  background:#111;
+  transition:transform .16s ease, background .16s ease;
+}
+
+.theme-toggle.on {
+  background:#111;
+  border-color:#111;
+}
+
+.theme-toggle.on span {
+  transform:translateX(12px);
+  background:#fff;
+}
+
+html[data-theme='dark'],
+html[data-theme='dark'] body,
+html[data-theme='dark'] #root,
+html[data-theme='dark'] .page {
+  background:#000;
+  color:#fff;
+}
+
+html[data-theme='dark'] {
+  color-scheme:dark;
+}
+
+html[data-theme='dark'] .section,
+html[data-theme='dark'] .wallet-row,
+html[data-theme='dark'] .notice,
+html[data-theme='dark'] .sheet-head {
+  border-color:#262626;
+}
+
+html[data-theme='dark'] .muted,
+html[data-theme='dark'] .index,
+html[data-theme='dark'] .wallet-id span,
+html[data-theme='dark'] .status-row,
+html[data-theme='dark'] .validation,
+html[data-theme='dark'] .global-grid label,
+html[data-theme='dark'] .strategy-global label,
+html[data-theme='dark'] .note,
+html[data-theme='dark'] .footnote,
+html[data-theme='dark'] .sheet-head span,
+html[data-theme='dark'] .sheet-label-row,
+html[data-theme='dark'] .withdraw-amount-row span,
+html[data-theme='dark'] .sheet-copy,
+html[data-theme='dark'] .sheet-footnote,
+html[data-theme='dark'] .delete-note,
+html[data-theme='dark'] .empty {
+  color:#8d8d8d;
+}
+
+html[data-theme='dark'] input {
+  background:#000;
+  color:#fff;
+  border-color:#303030;
+}
+
+html[data-theme='dark'] input::placeholder {
+  color:#6f6f6f;
+}
+
+html[data-theme='dark'] input:focus {
+  border-color:#fff;
+}
+
+html[data-theme='dark'] .link-button,
+html[data-theme='dark'] .top-menu-button,
+html[data-theme='dark'] .save,
+html[data-theme='dark'] .sheet-label-row button {
+  color:#fff;
+}
+
+html[data-theme='dark'] .wallet-tool,
+html[data-theme='dark'] .trade-row .sell,
+html[data-theme='dark'] .auto,
+html[data-theme='dark'] .secondary,
+html[data-theme='dark'] .sheet-secondary,
+html[data-theme='dark'] .sheet-danger {
+  background:#000;
+  color:#fff;
+  border-color:#444;
+}
+
+html[data-theme='dark'] .managed {
+  color:#fff;
+  border-color:#fff;
+}
+
+html[data-theme='dark'] .managed.off {
+  color:#777;
+  border-color:#3b3b3b;
+}
+
+html[data-theme='dark'] .trade-row .buy,
+html[data-theme='dark'] .primary,
+html[data-theme='dark'] .sheet-primary,
+html[data-theme='dark'] .unlock button {
+  background:#fff;
+  color:#000;
+  border-color:#fff;
+}
+
+html[data-theme='dark'] .auto.on {
+  background:#fff;
+  color:#000;
+  border-color:#fff;
+}
+
+html[data-theme='dark'] .status-row strong,
+html[data-theme='dark'] .validation.valid {
+  color:#fff;
+}
+
+html[data-theme='dark'] .row-error,
+html[data-theme='dark'] .validation.error,
+html[data-theme='dark'] .notice {
+  color:#d28b8b;
+}
+
+html[data-theme='dark'] .sheet-overlay {
+  background:rgba(255,255,255,.12);
+}
+
+html[data-theme='dark'] .funds-sheet {
+  background:#050505;
+  color:#fff;
+  box-shadow:0 -12px 40px rgba(0,0,0,.55);
+}
+
+html[data-theme='dark'] .sheet-handle {
+  background:#4a4a4a;
+}
+
+html[data-theme='dark'] .sheet-close {
+  color:#aaa;
+}

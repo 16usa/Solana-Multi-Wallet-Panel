@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { validateMint } from '@workspace/api-client-react';
 
 const WITHDRAWAL_STORAGE_KEY = 'multi-wallet:withdrawal-address:v1';
+const THEME_STORAGE_KEY = 'multi-wallet:theme:v1';
 
 type Strategy = {
   enabled: boolean;
@@ -37,6 +38,10 @@ export default function Home() {
   );
   const [tokenInput, setTokenInput] = useState(token);
   const [unlocked, setUnlocked] = useState(Boolean(token));
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    return saved === 'dark' ? 'dark' : 'light';
+  });
 
   const [wallets, setWallets] = useState<WalletRow[]>([]);
   const [mint, setMint] = useState('');
@@ -135,6 +140,11 @@ export default function Home() {
     slPct,
     slSellPct,
   ]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
 
   useEffect(() => {
     if (!unlocked) return;
@@ -645,7 +655,26 @@ export default function Home() {
     return (
       <main className="page">
         <section className="shell unlock">
-          <h1>24/7 EXECUTION</h1>
+          <div className="title-with-theme">
+            <h1>24/7 EXECUTION</h1>
+            <button
+            className={`theme-toggle ${theme === 'dark' ? 'on' : ''}`}
+            onClick={() =>
+              setTheme((current) =>
+                current === 'dark' ? 'light' : 'dark',
+              )
+            }
+            aria-label={
+              theme === 'dark'
+                ? 'Switch to light mode'
+                : 'Switch to dark mode'
+            }
+            aria-pressed={theme === 'dark'}
+            title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+          >
+            <span />
+          </button>
+          </div>
           <p>
             Enter your private panel access token. This is not a wallet seed
             or private key.
@@ -669,7 +698,26 @@ export default function Home() {
     <main className="page">
       <section className="shell">
         <header className="topbar">
-          <h1>24/7 EXECUTION</h1>
+          <div className="title-with-theme">
+            <h1>24/7 EXECUTION</h1>
+            <button
+            className={`theme-toggle ${theme === 'dark' ? 'on' : ''}`}
+            onClick={() =>
+              setTheme((current) =>
+                current === 'dark' ? 'light' : 'dark',
+              )
+            }
+            aria-label={
+              theme === 'dark'
+                ? 'Switch to light mode'
+                : 'Switch to dark mode'
+            }
+            aria-pressed={theme === 'dark'}
+            title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+          >
+            <span />
+          </button>
+          </div>
           <div className="topbar-actions">
             <button
               className="top-menu-button"
