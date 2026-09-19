@@ -102,7 +102,7 @@ input::placeholder { color: #a7a7a7; }
 
 .wallet-top {
   display: grid;
-  grid-template-columns: 30px 26px minmax(0, 1fr) 28px 28px;
+  grid-template-columns: 30px 26px minmax(0, 1fr) auto 28px 28px;
   align-items: center;
   column-gap: 6px;
   min-height: 34px;
@@ -145,11 +145,9 @@ input::placeholder { color: #a7a7a7; }
   gap: 6px;
 }
 
-.address { font-size: 12px; font-weight: 650; }
-
-.connected-dot {
-  font-size: 9px;
-  color: #666;
+.address {
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .wallet-sub {
@@ -159,6 +157,27 @@ input::placeholder { color: #a7a7a7; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.row-connect {
+  height: 27px;
+  border: 1px solid #d8d8d8;
+  border-radius: 7px;
+  padding: 0 8px;
+  background: #fff;
+  color: #111;
+  font-size: 8px;
+  line-height: 25px;
+  font-weight: 750;
+  letter-spacing: .035em;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.row-connect.connected {
+  border-color: #111;
+  background: #111;
+  color: #fff;
 }
 
 .icon-button {
@@ -365,6 +384,7 @@ input::placeholder { color: #a7a7a7; }
   border-top: 1px solid #e7e7e7;
   padding: 9px 0 0;
   font-size: 10px;
+  line-height: 1.35;
   color: #7b2d2d;
 }
 
@@ -402,16 +422,36 @@ input::placeholder { color: #a7a7a7; }
   color: #111 !important;
 }
 
-.wallet-adapter-modal-title { color: #111 !important; }
-.wallet-adapter-modal-list .wallet-adapter-button { color: #111 !important; }
+.wallet-adapter-modal-title {
+  color: #111 !important;
+}
+
+.wallet-adapter-modal-list .wallet-adapter-button {
+  color: #111 !important;
+}
 
 @media (max-width: 640px) {
-  .page { padding: 10px 12px 18px; }
-  .topbar { padding-bottom: 10px; gap: 8px; }
-  h1 { font-size: 14px; }
+  .page {
+    padding: 10px 12px 18px;
+  }
 
-  .section { padding: 10px 0; }
-  .section-head { margin-bottom: 7px; font-size: 12px; }
+  .topbar {
+    padding-bottom: 10px;
+    gap: 8px;
+  }
+
+  h1 {
+    font-size: 14px;
+  }
+
+  .section {
+    padding: 10px 0;
+  }
+
+  .section-head {
+    margin-bottom: 7px;
+    font-size: 12px;
+  }
 
   input {
     height: 38px;
@@ -431,31 +471,60 @@ input::placeholder { color: #a7a7a7; }
     font-size: 11px;
   }
 
-  .wallet-list { margin-top: 4px; }
-  .empty { padding: 4px 0 0; font-size: 11px; }
-
-  .wallet-row { padding: 7px 0; }
-
-  .wallet-top {
-    grid-template-columns: 28px 22px minmax(0, 1fr) 25px 25px;
-    column-gap: 5px;
+  .wallet-list {
+    margin-top: 4px;
   }
 
-  .address { font-size: 11px; }
-  .wallet-sub { font-size: 9px; }
+  .empty {
+    padding: 4px 0 0;
+    font-size: 11px;
+  }
+
+  .wallet-row {
+    padding: 7px 0;
+  }
+
+  .wallet-top {
+    grid-template-columns:
+      28px 22px minmax(0, 1fr)
+      auto 24px 24px;
+    column-gap: 4px;
+  }
+
+  .address {
+    font-size: 11px;
+  }
+
+  .wallet-sub {
+    font-size: 9px;
+  }
+
+  .row-connect {
+    height: 25px;
+    padding: 0 6px;
+    border-radius: 6px;
+    font-size: 7px;
+    line-height: 23px;
+  }
 
   .wallet-controls {
-    margin-left: 55px;
+    margin-left: 54px;
     gap: 6px;
   }
 
   .wallet-control {
-    grid-template-columns: auto minmax(38px, 1fr) auto auto;
+    grid-template-columns:
+      auto minmax(38px, 1fr) auto auto;
     gap: 4px;
   }
 
-  .control-label { font-size: 8px; }
-  .control-unit { font-size: 8px; }
+  .control-label {
+    font-size: 8px;
+  }
+
+  .control-unit {
+    font-size: 8px;
+  }
 
   .wallet-amount,
   .wallet-percent {
@@ -472,22 +541,38 @@ input::placeholder { color: #a7a7a7; }
   }
 
   .order-line {
-    margin-left: 55px;
+    margin-left: 54px;
     font-size: 9px;
   }
 
-  .global-settings { gap: 8px; }
-  .global-setting > span { margin-bottom: 4px; font-size: 9px; }
-  .global-input input { height: 36px; font-size: 15px; }
+  .global-settings {
+    gap: 8px;
+  }
 
-  .summary { margin-top: 7px; font-size: 9.5px; }
+  .global-setting > span {
+    margin-bottom: 4px;
+    font-size: 9px;
+  }
+
+  .global-input input {
+    height: 36px;
+    font-size: 15px;
+  }
+
+  .summary {
+    margin-top: 7px;
+    font-size: 9.5px;
+  }
 
   .all-actions {
     gap: 7px;
     margin-top: 8px;
   }
 
-  .primary { height: 40px; font-size: 10px; }
+  .primary {
+    height: 40px;
+    font-size: 10px;
+  }
 
   .wallet-adapter-button.wallet-connect,
   .wallet-adapter-button-trigger {

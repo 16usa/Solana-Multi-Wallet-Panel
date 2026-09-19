@@ -1,8 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
+import {
+  WalletMultiButton,
+  useWalletModal,
+} from '@solana/wallet-adapter-react-ui';
 import { VersionedTransaction } from '@solana/web3.js';
-import { getBalance, validateMint, prepareOrder, executeOrder } from '@workspace/api-client-react';
+import {
+  getBalance,
+  validateMint,
+  prepareOrder,
+  executeOrder,
+} from '@workspace/api-client-react';
 
 const STORAGE_KEY = 'multi-wallet:wallets:v1';
 
@@ -29,6 +37,14 @@ function formatSol(value: number | null | undefined) {
   if (value >= 100) return value.toFixed(2);
   if (value >= 1) return value.toFixed(3);
   return value.toFixed(4);
+}
+
+function isIphoneSafari() {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent;
+  const ios = /iPhone|iPad|iPod/i.test(ua);
+  const safari = /Safari/i.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/i.test(ua);
+  return ios && safari;
 }
 
 interface WalletItem {
@@ -60,15 +76,27 @@ async function prepareSellOrder(input: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   });
+
   const data = await response.json().catch(() => ({}));
+
   if (!response.ok) {
-    throw new Error(data?.error || `Sell preparation failed (${response.status})`);
+    throw new Error(
+      data?.error || `Sell preparation failed (${response.status})`,
+    );
   }
+
   return data;
 }
 
 export default function Home() {
-  const { publicKey, connected, signTransaction } = useWallet();
+  const {
+    publicKey,
+    connected,
+    signTransaction,
+    disconnect,
+  } = useWallet();
+  const { setVisible } = useWalletModal();
+
   const connectedAddress = publicKey?.toBase58() || '';
 
   const [wallets, setWallets] = useState<WalletItem[]>(() => {
@@ -90,10 +118,25 @@ export default function Home() {
   const [orders, setOrders] = useState<Record<string, any>>({});
   const [busyAll, setBusyAll] = useState<Side | null>(null);
   const [notice, setNotice] = useState('');
+  const [connectTarget, setConnectTarget] = useState('');
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(wallets));
   }, [wallets]);
+
+  useEffect(() => {
+    if (!connectTarget || !connectedAddress) return;
+
+    if (connectedAddress === connectTarget) {
+      setNotice(`Connected ${shortAddress(connectedAddress)}.`);
+      setConnectTarget('');
+      return;
+    }
+
+    setNotice(
+      `Connected ${shortAddress(connectedAddress)}, but this row is ${shortAddress(connectTarget)}. Switch to that account in your wallet and connect again.`,
+    );
+  }, [connectedAddress, connectTarget]);
 
   const activeWallets = useMemo(
     () => wallets.filter((w) => w.active),
@@ -150,6 +193,7 @@ export default function Home() {
 
     try {
       const data = await getBalance({ address });
+
       const wallet: WalletItem = {
         id: crypto.randomUUID(),
         address,
@@ -158,6 +202,7 @@ export default function Home() {
         sellPct: '',
         balance: data.sol,
       };
+
       setWallets((prev) => [...prev, wallet]);
       setNewAddress('');
     } catch (error) {
@@ -167,6 +212,7 @@ export default function Home() {
 
   function removeWallet(id: string) {
     const target = wallets.find((w) => w.id === id);
+
     if (target) {
       setOrders((prev) => {
         const copy = { ...prev };
@@ -174,6 +220,7 @@ export default function Home() {
         return copy;
       });
     }
+
     setWallets((prev) => prev.filter((w) => w.id !== id));
   }
 
@@ -181,6 +228,39 @@ export default function Home() {
     setWallets((prev) =>
       prev.map((w) => (w.id === id ? { ...w, ...patch } : w)),
     );
+  }
+
+  async function connectWalletRow(address: string) {
+    setNotice('');
+
+    if (connectedAddress === address) {
+      try {
+        await disconnect();
+        setConnectTarget('');
+        setNotice(`Disconnected ${shortAddress(address)}.`);
+      } catch (error) {
+        setNotice(getErrorMsg(error));
+      }
+      return;
+    }
+
+    if (isIphoneSafari()) {
+      setNotice(
+        'iPhone Safari cannot connect Phantom directly. Open this same page inside the Phantom or Solflare in-app browser, then tap CONNECT on this row.',
+      );
+      return;
+    }
+
+    try {
+      if (connected) {
+        await disconnect();
+      }
+
+      setConnectTarget(address);
+      setVisible(true);
+    } catch (error) {
+      setNotice(getErrorMsg(error));
+    }
   }
 
   async function handleValidateMint() {
@@ -206,6 +286,7 @@ export default function Home() {
       setNotice('Validate the mint address first.');
       return false;
     }
+
     return true;
   }
 
@@ -216,11 +297,13 @@ export default function Home() {
       setNotice(`Enable ${shortAddress(wallet.address)} first.`);
       return;
     }
+
     if (!validateTradeReady()) return;
 
     try {
       if (side === 'buy') {
         const amount = Number(wallet.amount || defaultAmount);
+
         if (!Number.isFinite(amount) || amount <= 0) {
           throw new Error('Enter a valid SOL buy amount.');
         }
@@ -238,12 +321,19 @@ export default function Home() {
 
         setOrders((prev) => ({
           ...prev,
-          [wallet.address]: { status: 'ready', side, amount, ...data },
+          [wallet.address]: {
+            status: 'ready',
+            side,
+            amount,
+            ...data,
+          },
         }));
+
         return;
       }
 
       const percentage = Number(wallet.sellPct || defaultSellPct);
+
       if (
         !Number.isFinite(percentage) ||
         percentage <= 0 ||
@@ -254,7 +344,11 @@ export default function Home() {
 
       setOrders((prev) => ({
         ...prev,
-        [wallet.address]: { status: 'preparing', side, percentage },
+        [wallet.address]: {
+          status: 'preparing',
+          side,
+          percentage,
+        },
       }));
 
       const data = await prepareSellOrder({
@@ -291,10 +385,13 @@ export default function Home() {
       setNotice('Add at least one active wallet.');
       return;
     }
+
     if (!validateTradeReady()) return;
 
     setBusyAll(side);
-    await Promise.all(activeWallets.map((wallet) => prepareWallet(wallet, side)));
+    await Promise.all(
+      activeWallets.map((wallet) => prepareWallet(wallet, side)),
+    );
     setBusyAll(null);
   }
 
@@ -302,30 +399,41 @@ export default function Home() {
     const order = orders[address];
 
     if (!connected || connectedAddress !== address) {
-      setNotice(`Connect ${shortAddress(address)} before signing this transaction.`);
+      setNotice(
+        `Connect ${shortAddress(address)} before signing this transaction.`,
+      );
       return;
     }
 
     if (!signTransaction) {
-      setNotice('The connected wallet does not expose transaction signing.');
+      setNotice(
+        'The connected wallet does not expose transaction signing.',
+      );
       return;
     }
 
     try {
       setOrders((prev) => ({
         ...prev,
-        [address]: { ...prev[address], status: 'signing' },
+        [address]: {
+          ...prev[address],
+          status: 'signing',
+        },
       }));
 
       const tx = VersionedTransaction.deserialize(
         bytesFromBase64(order.transaction),
       );
+
       const signed = await signTransaction(tx);
       const signedBase64 = base64FromBytes(signed.serialize());
 
       setOrders((prev) => ({
         ...prev,
-        [address]: { ...prev[address], status: 'executing' },
+        [address]: {
+          ...prev[address],
+          status: 'executing',
+        },
       }));
 
       const data = await executeOrder({
@@ -349,6 +457,7 @@ export default function Home() {
           result: data,
         },
       }));
+
       refreshBalance(address);
     } catch (error) {
       setOrders((prev) => ({
@@ -373,7 +482,9 @@ export default function Home() {
         <section className="section">
           <div className="section-head">
             <span>Wallets</span>
-            <span className="muted">{activeWallets.length} active</span>
+            <span className="muted">
+              {activeWallets.length} active
+            </span>
           </div>
 
           <div className="add-row">
@@ -384,7 +495,10 @@ export default function Home() {
               placeholder="Solana wallet address"
               spellCheck="false"
             />
-            <button className="text-button" onClick={addWallet}>
+            <button
+              className="text-button"
+              onClick={addWallet}
+            >
               + Add wallet
             </button>
           </div>
@@ -396,19 +510,30 @@ export default function Home() {
 
             {wallets.map((wallet, index) => {
               const order = orders[wallet.address];
-              const matches = connectedAddress === wallet.address;
+              const matches =
+                connectedAddress === wallet.address;
+
               const rowBusy =
                 order &&
-                ['preparing', 'signing', 'executing'].includes(order.status);
+                ['preparing', 'signing', 'executing'].includes(
+                  order.status,
+                );
 
               return (
-                <div className="wallet-row" key={wallet.id}>
+                <div
+                  className="wallet-row"
+                  key={wallet.id}
+                >
                   <div className="wallet-top">
                     <button
-                      className={`toggle ${wallet.active ? 'on' : ''}`}
+                      className={`toggle ${
+                        wallet.active ? 'on' : ''
+                      }`}
                       aria-label="toggle wallet"
                       onClick={() =>
-                        patchWallet(wallet.id, { active: !wallet.active })
+                        patchWallet(wallet.id, {
+                          active: !wallet.active,
+                        })
                       }
                     >
                       <span />
@@ -420,13 +545,14 @@ export default function Home() {
 
                     <div className="wallet-main">
                       <div className="address-line">
-                        <span className="address" title={wallet.address}>
+                        <span
+                          className="address"
+                          title={wallet.address}
+                        >
                           {shortAddress(wallet.address)}
                         </span>
-                        {matches && (
-                          <span className="connected-dot">connected</span>
-                        )}
                       </div>
+
                       <div className="wallet-sub">
                         {wallet.balanceError
                           ? wallet.balanceError
@@ -435,12 +561,26 @@ export default function Home() {
                     </div>
 
                     <button
+                      className={`row-connect ${
+                        matches ? 'connected' : ''
+                      }`}
+                      onClick={() =>
+                        connectWalletRow(wallet.address)
+                      }
+                    >
+                      {matches ? 'CONNECTED' : 'CONNECT'}
+                    </button>
+
+                    <button
                       className="icon-button"
-                      onClick={() => refreshBalance(wallet.address)}
+                      onClick={() =>
+                        refreshBalance(wallet.address)
+                      }
                       aria-label="refresh balance"
                     >
                       ↻
                     </button>
+
                     <button
                       className="icon-button"
                       onClick={() => removeWallet(wallet.id)}
@@ -453,47 +593,74 @@ export default function Home() {
                   <div className="wallet-controls">
                     <div className="wallet-control">
                       <span className="control-label">BUY</span>
+
                       <input
                         className="wallet-amount"
                         inputMode="decimal"
                         value={wallet.amount}
                         onChange={(e) =>
                           patchWallet(wallet.id, {
-                            amount: e.target.value.replace(/[^0-9.]/g, ''),
+                            amount: e.target.value.replace(
+                              /[^0-9.]/g,
+                              '',
+                            ),
                           })
                         }
-                        placeholder={defaultAmount || '0.10'}
+                        placeholder={
+                          defaultAmount || '0.10'
+                        }
                         aria-label="wallet buy amount"
                       />
+
                       <span className="control-unit">SOL</span>
+
                       <button
                         className="trade-button buy"
-                        disabled={!wallet.active || rowBusy}
-                        onClick={() => prepareWallet(wallet, 'buy')}
+                        disabled={
+                          !wallet.active || rowBusy
+                        }
+                        onClick={() =>
+                          prepareWallet(wallet, 'buy')
+                        }
                       >
                         BUY
                       </button>
                     </div>
 
                     <div className="wallet-control">
-                      <span className="control-label">SELL</span>
+                      <span className="control-label">
+                        SELL
+                      </span>
+
                       <input
                         className="wallet-percent"
                         inputMode="decimal"
                         value={wallet.sellPct || ''}
                         onChange={(e) =>
                           patchWallet(wallet.id, {
-                            sellPct: e.target.value.replace(/[^0-9.]/g, ''),
+                            sellPct:
+                              e.target.value.replace(
+                                /[^0-9.]/g,
+                                '',
+                              ),
                           })
                         }
-                        placeholder={defaultSellPct || '100'}
+                        placeholder={
+                          defaultSellPct || '100'
+                        }
                         aria-label="wallet sell percent"
                       />
+
                       <span className="control-unit">%</span>
+
                       <button
                         className="trade-button sell"
-                        disabled={!wallet.active || rowBusy}
-                        onClick={() => prepareWallet(wallet, 'sell')}
+                        disabled={
+                          !wallet.active || rowBusy
+                        }
+                        onClick={() =>
+                          prepareWallet(wallet, 'sell')
+                        }
                       >
                         SELL
                       </button>
@@ -501,12 +668,20 @@ export default function Home() {
                   </div>
 
                   {order && (
-                    <div className={`order-line ${order.status}`}>
+                    <div
+                      className={`order-line ${order.status}`}
+                    >
                       <span>
                         {order.status === 'ready'
-                          ? `Ready ${String(order.side || '').toUpperCase()} · ${order.router || 'route'}`
+                          ? `Ready ${String(
+                              order.side || '',
+                            ).toUpperCase()} · ${
+                              order.router || 'route'
+                            }`
                           : order.status === 'success'
-                            ? `${String(order.side || '').toUpperCase()} confirmed`
+                            ? `${String(
+                                order.side || '',
+                              ).toUpperCase()} confirmed`
                             : order.status === 'error'
                               ? order.error
                               : order.status}
@@ -514,22 +689,27 @@ export default function Home() {
 
                       {order.status === 'ready' && (
                         <button
-                          onClick={() => signAndExecute(wallet.address)}
+                          onClick={() =>
+                            signAndExecute(
+                              wallet.address,
+                            )
+                          }
                           disabled={!matches}
                         >
                           Sign & execute
                         </button>
                       )}
 
-                      {order.status === 'success' && order.signature && (
-                        <a
-                          href={`https://solscan.io/tx/${order.signature}`}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Solscan
-                        </a>
-                      )}
+                      {order.status === 'success' &&
+                        order.signature && (
+                          <a
+                            href={`https://solscan.io/tx/${order.signature}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Solscan
+                          </a>
+                        )}
                     </div>
                   )}
                 </div>
@@ -542,6 +722,7 @@ export default function Home() {
           <div className="section-head">
             <span>Token</span>
           </div>
+
           <div className="field-row">
             <input
               value={mint}
@@ -553,15 +734,26 @@ export default function Home() {
               placeholder="Paste token mint"
               spellCheck="false"
             />
-            <button className="text-button" onClick={handleValidateMint}>
+
+            <button
+              className="text-button"
+              onClick={handleValidateMint}
+            >
               Validate
             </button>
           </div>
-          <div className={`validation ${mintState.status}`}>
-            {mintState.status === 'loading' && 'Checking mint…'}
+
+          <div
+            className={`validation ${mintState.status}`}
+          >
+            {mintState.status === 'loading' &&
+              'Checking mint…'}
+
             {mintState.status === 'valid' &&
               `Valid SPL mint · ${mintState.decimals} decimals`}
-            {mintState.status === 'error' && mintState.message}
+
+            {mintState.status === 'error' &&
+              mintState.message}
           </div>
         </section>
 
@@ -573,12 +765,18 @@ export default function Home() {
           <div className="global-settings">
             <div className="global-setting">
               <span>Buy / wallet</span>
+
               <div className="global-input">
                 <input
                   inputMode="decimal"
                   value={defaultAmount}
                   onChange={(e) =>
-                    setDefaultAmount(e.target.value.replace(/[^0-9.]/g, ''))
+                    setDefaultAmount(
+                      e.target.value.replace(
+                        /[^0-9.]/g,
+                        '',
+                      ),
+                    )
                   }
                 />
                 <b>SOL</b>
@@ -587,12 +785,18 @@ export default function Home() {
 
             <div className="global-setting">
               <span>Sell / wallet</span>
+
               <div className="global-input">
                 <input
                   inputMode="decimal"
                   value={defaultSellPct}
                   onChange={(e) =>
-                    setDefaultSellPct(e.target.value.replace(/[^0-9.]/g, ''))
+                    setDefaultSellPct(
+                      e.target.value.replace(
+                        /[^0-9.]/g,
+                        '',
+                      ),
+                    )
                   }
                 />
                 <b>%</b>
@@ -605,8 +809,12 @@ export default function Home() {
               {activeWallets.length} wallet
               {activeWallets.length === 1 ? '' : 's'}
             </span>
+
             <strong>
-              {Number.isFinite(total) ? total.toFixed(4) : '0.0000'} SOL buy total
+              {Number.isFinite(total)
+                ? total.toFixed(4)
+                : '0.0000'}{' '}
+              SOL buy total
             </strong>
           </div>
 
@@ -614,26 +822,39 @@ export default function Home() {
             <button
               className="primary buy-all"
               onClick={() => prepareAll('buy')}
-              disabled={busyAll !== null || !activeWallets.length}
+              disabled={
+                busyAll !== null ||
+                !activeWallets.length
+              }
             >
-              {busyAll === 'buy' ? 'PREPARING…' : 'BUY ALL'}
+              {busyAll === 'buy'
+                ? 'PREPARING…'
+                : 'BUY ALL'}
             </button>
 
             <button
               className="primary sell-all"
               onClick={() => prepareAll('sell')}
-              disabled={busyAll !== null || !activeWallets.length}
+              disabled={
+                busyAll !== null ||
+                !activeWallets.length
+              }
             >
-              {busyAll === 'sell' ? 'PREPARING…' : 'SELL ALL'}
+              {busyAll === 'sell'
+                ? 'PREPARING…'
+                : 'SELL ALL'}
             </button>
           </div>
         </section>
 
-        {notice && <div className="notice">{notice}</div>}
+        {notice && (
+          <div className="notice">{notice}</div>
+        )}
 
         <p className="footnote">
-          Private keys and seed phrases are never stored by this app. Prepared
-          transactions are signed only by the matching connected wallet.
+          Private keys and seed phrases are never stored by
+          this app. Prepared transactions are signed only by
+          the matching connected wallet.
         </p>
       </section>
     </main>

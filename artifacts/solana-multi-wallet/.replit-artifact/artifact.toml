@@ -12,7 +12,7 @@ paths = [ "/" ]
 localPort = 25364
 
 [services.development]
-run = "pnpm --filter @workspace/solana-multi-wallet run dev"
+run = "bash scripts/run-wallet-web.sh"
 
 [services.production]
 build = [ "pnpm", "--filter", "@workspace/solana-multi-wallet", "run", "build" ]
@@ -26,3 +26,4 @@ to = "/index.html"
 [services.env]
 PORT = "25364"
 BASE_PATH = "/"
+WALLET_API_PORT = "25365"
