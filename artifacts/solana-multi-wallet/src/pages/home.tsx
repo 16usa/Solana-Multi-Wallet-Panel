@@ -29,10 +29,11 @@ type WalletRow = {
   id: string;
   address: string;
   enabled: boolean;
-  sol: number;
+  sol: number | null;
+  balanceError?: string | null;
   strategy?: Strategy | null;
   pnl?: number | null;
-  tokenBalance?: number;
+  tokenBalance?: number | null;
   positionCostSol?: number;
   totalInvestedSol?: number;
   realizedPnlSol?: number;
@@ -307,7 +308,7 @@ export default function Home() {
 
     const timer = window.setInterval(() => {
       void refresh();
-    }, 5000);
+    }, 10000);
 
     return () => window.clearInterval(timer);
   }, [unlocked, refresh]);
@@ -1077,11 +1078,24 @@ export default function Home() {
         }),
       });
 
-      const ok = (data.results || []).filter((x: any) => x.ok).length;
-      const failed = (data.results || []).length - ok;
+      const results = data.results || [];
+      const ok = results.filter((x: any) => x.ok).length;
+      const failedResults = results.filter((x: any) => !x.ok);
+      const failed = failedResults.length;
+      const reasons = [
+        ...new Set(
+          failedResults
+            .map((x: any) => String(x.error || '').trim())
+            .filter(Boolean),
+        ),
+      ];
+      const reasonText =
+        reasons.length > 0
+          ? ` · ${reasons.slice(0, 2).join(' · ')}`
+          : '';
 
       setNotice(
-        `${side.toUpperCase()} ALL finished · ${ok} success · ${failed} failed`,
+        `${side.toUpperCase()} ALL finished · ${ok} success · ${failed} failed${reasonText}`,
       );
 
       await refresh();
@@ -1558,9 +1572,11 @@ export default function Home() {
                     </span>
                   </div>
 
-                  {wallet.strategy?.lastError && (
+                  {(wallet.balanceError ||
+                    wallet.strategy?.lastError) && (
                     <div className="row-error">
-                      {wallet.strategy.lastError}
+                      {wallet.balanceError ||
+                        wallet.strategy?.lastError}
                     </div>
                   )}
                 </div>

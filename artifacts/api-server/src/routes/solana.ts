@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { Connection, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
+import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import {
   ExecuteOrderBody,
   ExecuteOrderResponse,
@@ -10,38 +10,13 @@ import {
   ValidateMintQueryParams,
   ValidateMintResponse,
 } from "@workspace/api-zod";
+import {
+  rpcErrorMessage,
+  solanaConnection,
+} from "../lib/solana-rpc";
 
 const router: IRouter = Router();
-function normalizedRpcUrl(): string {
-  const fallback = "https://api.mainnet-beta.solana.com";
-  let value = (process.env.SOLANA_RPC_URL ?? "").trim();
-
-  if (value.startsWith("SOLANA_RPC_URL=")) {
-    value = value.slice("SOLANA_RPC_URL=".length).trim();
-  }
-
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
-    value = value.slice(1, -1).trim();
-  }
-
-  if (!value) return fallback;
-
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return fallback;
-    }
-    return parsed.toString();
-  } catch {
-    return fallback;
-  }
-}
-
-const rpcUrl = normalizedRpcUrl();
-const connection = new Connection(rpcUrl, "confirmed");
+const connection = solanaConnection;
 const jupiterBase = "https://api.jup.ag/swap/v2";
 const pumpSwapApi = "https://fun-block.pump.fun/agents/swap";
 const pumpCoinApi = "https://frontend-api-v3.pump.fun/coins-v2";
@@ -138,7 +113,7 @@ router.get("/balance", async (req, res): Promise<void> => {
     req.log.error({ err: error }, "Solana balance lookup failed");
     res
       .status(502)
-      .json({ error: "Could not read wallet balance from Solana RPC" });
+      .json({ error: rpcErrorMessage(error) });
   }
 });
 
@@ -182,7 +157,7 @@ router.get("/mint", async (req, res): Promise<void> => {
     req.log.error({ err: error }, "Solana mint validation failed");
     res
       .status(502)
-      .json({ error: "Could not validate mint through Solana RPC" });
+      .json({ error: rpcErrorMessage(error) });
   }
 });
 

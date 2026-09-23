@@ -1,5 +1,4 @@
 import {
-  Connection,
   Keypair,
   LAMPORTS_PER_SOL,
   PublicKey,
@@ -7,43 +6,25 @@ import {
   Transaction,
   VersionedTransaction,
 } from "@solana/web3.js";
+import { solanaConnection } from "./solana-rpc";
 
-function normalizedRpcUrl(): string {
-  const fallback = "https://api.mainnet-beta.solana.com";
-  let value = (process.env.SOLANA_RPC_URL ?? "").trim();
-
-  if (value.startsWith("SOLANA_RPC_URL=")) {
-    value = value.slice("SOLANA_RPC_URL=".length).trim();
-  }
-
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
-    value = value.slice(1, -1).trim();
-  }
-
-  if (!value) return fallback;
-
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return fallback;
-    }
-    return parsed.toString();
-  } catch {
-    return fallback;
-  }
-}
-
-const rpcUrl = normalizedRpcUrl();
-export const executionConnection = new Connection(rpcUrl, "confirmed");
+export const executionConnection = solanaConnection;
 
 const jupiterBase = "https://api.jup.ag/swap/v2";
 const jupiterPriceBase = "https://api.jup.ag/price/v3";
 const pumpSwapApi = "https://fun-block.pump.fun/agents/swap";
 const pumpCoinApi = "https://frontend-api-v3.pump.fun/coins-v2";
 const solMint = "So11111111111111111111111111111111111111112";
+const PRICE_CACHE_MS = 4_000;
+const SOL_USD_CACHE_MS = 30_000;
+
+const priceCache = new Map<
+  string,
+  { value: number; expiresAt: number }
+>();
+let solUsdCache:
+  | { value: number; expiresAt: number }
+  | null = null;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -79,7 +60,19 @@ function jupiterHeaders(): Record<string, string> | null {
   return key ? { "x-api-key": key } : null;
 }
 
+function cacheSolUsd(value: number): number {
+  solUsdCache = {
+    value,
+    expiresAt: Date.now() + SOL_USD_CACHE_MS,
+  };
+  return value;
+}
+
 export async function currentSolUsd(): Promise<number> {
+  if (solUsdCache && solUsdCache.expiresAt > Date.now()) {
+    return solUsdCache.value;
+  }
+
   const errors: string[] = [];
 
   const headers = jupiterHeaders();
@@ -98,7 +91,7 @@ export async function currentSolUsd(): Promise<number> {
         const usdPrice = numberValue(sol.usdPrice);
 
         if (usdPrice != null && usdPrice > 0) {
-          return usdPrice;
+          return cacheSolUsd(usdPrice);
         }
       }
 
@@ -131,7 +124,7 @@ export async function currentSolUsd(): Promise<number> {
     const usdPrice = numberValue(solana.usd);
 
     if (response.ok && usdPrice != null && usdPrice > 0) {
-      return usdPrice;
+      return cacheSolUsd(usdPrice);
     }
 
     errors.push(`CoinGecko ${response.status}`);
@@ -159,7 +152,7 @@ export async function currentSolUsd(): Promise<number> {
     const usdPrice = numberValue(data.amount);
 
     if (response.ok && usdPrice != null && usdPrice > 0) {
-      return usdPrice;
+      return cacheSolUsd(usdPrice);
     }
 
     errors.push(`Coinbase ${response.status}`);
@@ -479,6 +472,11 @@ export async function walletTokenBalance(
 }
 
 export async function currentPriceSol(mint: string): Promise<number> {
+  const cached = priceCache.get(mint);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+
   const coin = await pumpCoin(mint);
   if (coin.mint !== mint) {
     throw new Error(
@@ -517,7 +515,12 @@ export async function currentPriceSol(mint: string): Promise<number> {
     throw new Error("Invalid token supply");
   }
 
-  return marketCapSol / supply;
+  const value = marketCapSol / supply;
+  priceCache.set(mint, {
+    value,
+    expiresAt: Date.now() + PRICE_CACHE_MS,
+  });
+  return value;
 }
 
 export async function executeBuy(

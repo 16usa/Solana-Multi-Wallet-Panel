@@ -23,8 +23,10 @@ import {
   recordBuyAccounting,
   recordSellAccounting,
 } from "../lib/position-accounting";
+import { rpcErrorMessage } from "../lib/solana-rpc";
 
 const router: IRouter = Router();
+const BUY_NETWORK_RESERVE_SOL = 0.005;
 
 function authorized(value: string | undefined): boolean {
   const expected = process.env.PANEL_API_TOKEN;
@@ -99,7 +101,7 @@ async function lockStrategyForManualTrade(
 }
 
 async function restoreStrategyAfterManualFailure(
-  strategy: Awaited<ReturnType<typeof findStrategy>>,
+  strategy: Awaited<ReturnType<typeof findStrategy>> | null,
   error: unknown,
 ) {
   if (!strategy?.enabled) return;
@@ -108,10 +110,7 @@ async function restoreStrategyAfterManualFailure(
     .update(executionStrategiesTable)
     .set({
       state: "watching",
-      lastError:
-        error instanceof Error
-          ? error.message
-          : String(error),
+      lastError: rpcErrorMessage(error),
       updatedAt: new Date(),
     })
     .where(eq(executionStrategiesTable.id, strategy.id));
@@ -138,24 +137,27 @@ router.get("/execution/wallets", async (_req, res): Promise<void> => {
     .select()
     .from(executionWalletsTable);
 
-  const result = await Promise.all(
-    wallets.map(async (wallet) => {
-      let sol = 0;
-      try {
-        sol = await walletSolBalance(wallet.address);
-      } catch {
-        sol = 0;
-      }
+  const result: any[] = [];
 
-      return {
-        id: wallet.id,
-        address: wallet.address,
-        enabled: wallet.enabled,
-        sol,
-        createdAt: wallet.createdAt,
-      };
-    }),
-  );
+  for (const wallet of wallets) {
+    let sol: number | null = null;
+    let balanceError: string | null = null;
+
+    try {
+      sol = await walletSolBalance(wallet.address);
+    } catch (error) {
+      balanceError = rpcErrorMessage(error);
+    }
+
+    result.push({
+      id: wallet.id,
+      address: wallet.address,
+      enabled: wallet.enabled,
+      sol,
+      balanceError,
+      createdAt: wallet.createdAt,
+    });
+  }
 
   res.json({ wallets: result });
 });
@@ -200,8 +202,7 @@ router.get("/execution/state", async (req, res): Promise<void> => {
   try {
     priceSol = await currentPriceSol(mint);
   } catch (error) {
-    priceError =
-      error instanceof Error ? error.message : String(error);
+    priceError = rpcErrorMessage(error);
   }
 
   const wallets = await db
@@ -220,45 +221,65 @@ router.get("/execution/state", async (req, res): Promise<void> => {
     ]),
   );
 
-  const rows = await Promise.all(
-    wallets.map(async (wallet) => {
-      let sol = 0;
-      let tokenBalance = 0;
+  const rows: any[] = [];
 
-      try {
-        sol = await walletSolBalance(wallet.address);
-      } catch {
-        sol = 0;
-      }
+  for (const wallet of wallets) {
+    let sol: number | null = null;
+    let tokenBalance: number | null = null;
+    const balanceErrors: string[] = [];
 
-      try {
-        tokenBalance = await walletTokenBalance(
-          wallet.address,
-          mint,
-        );
-      } catch {
-        tokenBalance = 0;
-      }
+    try {
+      sol = await walletSolBalance(wallet.address);
+    } catch (error) {
+      balanceErrors.push(rpcErrorMessage(error));
+    }
 
-      const strategy = strategyByWallet.get(wallet.id) ?? null;
-      const financials = financialSnapshot(
-        strategy,
-        tokenBalance,
-        priceSol,
+    try {
+      tokenBalance = await walletTokenBalance(
+        wallet.address,
+        mint,
       );
+    } catch (error) {
+      balanceErrors.push(rpcErrorMessage(error));
+    }
 
-      return {
-        id: wallet.id,
-        address: wallet.address,
-        enabled: wallet.enabled,
-        sol,
-        tokenBalance,
-        strategy,
-        pnl: financials.totalPnlPct,
-        ...financials,
-      };
-    }),
-  );
+    const strategy = strategyByWallet.get(wallet.id) ?? null;
+    const positionCostSol = strategy?.positionCostSol ?? 0;
+    const totalInvestedSol =
+      strategy?.totalInvestedSol ?? positionCostSol;
+    const realizedPnlSol = strategy?.realizedPnlSol ?? 0;
+
+    const financials =
+      tokenBalance == null
+        ? {
+            positionCostSol,
+            totalInvestedSol,
+            realizedPnlSol,
+            unrealizedPnlSol: null,
+            totalPnlSol: null,
+            totalPnlPct: null,
+          }
+        : financialSnapshot(
+            strategy,
+            tokenBalance,
+            priceSol,
+          );
+
+    rows.push({
+      id: wallet.id,
+      address: wallet.address,
+      enabled: wallet.enabled,
+      sol,
+      tokenBalance,
+      balanceError:
+        balanceErrors.length > 0
+          ? [...new Set(balanceErrors)].join(" · ")
+          : null,
+      strategy,
+      pnl: financials.totalPnlPct,
+      ...financials,
+    });
+  }
 
   const realizedPnlSol = rows.reduce(
     (sum, wallet) => sum + wallet.realizedPnlSol,
@@ -274,8 +295,9 @@ router.get("/execution/state", async (req, res): Promise<void> => {
     priceSol != null &&
     rows.every(
       (wallet) =>
-        wallet.tokenBalance <= 0 ||
-        wallet.unrealizedPnlSol != null,
+        wallet.tokenBalance != null &&
+        (wallet.tokenBalance <= 0 ||
+          wallet.unrealizedPnlSol != null),
     );
 
   const unrealizedPnlSol = canValueOpenPositions
@@ -431,7 +453,7 @@ router.post("/execution/trade", async (req, res): Promise<void> => {
   }
 
   let strategy:
-    Awaited<ReturnType<typeof findStrategy>> = null;
+    Awaited<ReturnType<typeof findStrategy>> | null = null;
 
   try {
     strategy = await lockStrategyForManualTrade(
@@ -450,6 +472,15 @@ router.post("/execution/trade", async (req, res): Promise<void> => {
       if (!Number.isFinite(amount) || amount <= 0) {
         res.status(400).json({ error: "Invalid SOL amount" });
         return;
+      }
+
+      const availableSol = await walletSolBalance(address);
+      const requiredSol = amount + BUY_NETWORK_RESERVE_SOL;
+
+      if (availableSol < requiredSol) {
+        throw new Error(
+          `Insufficient SOL. Wallet has ${availableSol.toFixed(4)} SOL; buy needs about ${requiredSol.toFixed(4)} SOL including network reserve.`,
+        );
       }
 
       const beforeBalance = await walletTokenBalance(
@@ -581,10 +612,7 @@ router.post("/execution/trade", async (req, res): Promise<void> => {
 
     req.log.error({ err: error }, "Managed trade failed");
     res.status(422).json({
-      error:
-        error instanceof Error
-          ? error.message
-          : "Trade failed",
+      error: rpcErrorMessage(error),
     });
   }
 });
@@ -634,7 +662,7 @@ router.post("/execution/trade-all", async (req, res): Promise<void> => {
 
   for (const wallet of wallets) {
     let strategy:
-      Awaited<ReturnType<typeof findStrategy>> = null;
+      Awaited<ReturnType<typeof findStrategy>> | null = null;
 
     try {
       strategy = await lockStrategyForManualTrade(
@@ -649,6 +677,18 @@ router.post("/execution/trade-all", async (req, res): Promise<void> => {
       let signature: string;
 
       if (side === "buy") {
+        const availableSol = await walletSolBalance(
+          wallet.address,
+        );
+        const requiredSol =
+          buyAmount + BUY_NETWORK_RESERVE_SOL;
+
+        if (availableSol < requiredSol) {
+          throw new Error(
+            `Insufficient SOL. Wallet has ${availableSol.toFixed(4)} SOL; buy needs about ${requiredSol.toFixed(4)} SOL including network reserve.`,
+          );
+        }
+
         const beforeBalance = await walletTokenBalance(
           wallet.address,
           mint,
@@ -778,10 +818,7 @@ router.post("/execution/trade-all", async (req, res): Promise<void> => {
       results.push({
         address: wallet.address,
         ok: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : String(error),
+        error: rpcErrorMessage(error),
       });
     }
   }

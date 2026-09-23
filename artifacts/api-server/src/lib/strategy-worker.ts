@@ -13,6 +13,15 @@ import {
   walletTokenBalance,
 } from "./execution-engine";
 import { recordSellAccounting } from "./position-accounting";
+import {
+  isTransientRpcError,
+  rpcErrorMessage,
+} from "./solana-rpc";
+
+const STRATEGY_POLL_MS = Math.max(
+  7_500,
+  Number(process.env.STRATEGY_POLL_MS ?? 7_500) || 7_500,
+);
 
 let running = false;
 let timer: NodeJS.Timeout | null = null;
@@ -163,15 +172,14 @@ async function tick() {
           "24/7 strategy execution failed",
         );
 
+        const transient = isTransientRpcError(error);
+
         await db
           .update(executionStrategiesTable)
           .set({
-            enabled: false,
-            state: "error",
-            lastError:
-              error instanceof Error
-                ? error.message
-                : String(error),
+            enabled: transient ? strategy.enabled : false,
+            state: transient ? "watching" : "error",
+            lastError: rpcErrorMessage(error),
             updatedAt: new Date(),
           })
           .where(eq(executionStrategiesTable.id, strategy.id));
@@ -192,5 +200,5 @@ export function startStrategyWorker() {
 
   timer = setInterval(() => {
     void tick();
-  }, 5000);
+  }, STRATEGY_POLL_MS);
 }

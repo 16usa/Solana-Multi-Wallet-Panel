@@ -27,7 +27,10 @@ import { Keypair } from "@solana/web3.js";
 import { logger } from "./logger";
 
 const SOL_EPSILON = 0.00001;
-const POLL_MS = 1800;
+const POLL_MS = Math.max(
+  5_000,
+  Number(process.env.COPY_TRADING_POLL_MS ?? 5_000) || 5_000,
+);
 const WSOL_MINT = "So11111111111111111111111111111111111111112";
 
 type DetectedTrade = {
