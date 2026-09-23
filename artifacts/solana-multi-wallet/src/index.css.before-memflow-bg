@@ -272,7 +272,7 @@ html[data-theme='dark'],
 html[data-theme='dark'] body,
 html[data-theme='dark'] #root,
 html[data-theme='dark'] .page {
-  background:#071018;
+  background:#000;
   color:#fff;
 }
 
@@ -284,7 +284,7 @@ html[data-theme='dark'] .section,
 html[data-theme='dark'] .wallet-row,
 html[data-theme='dark'] .notice,
 html[data-theme='dark'] .sheet-head {
-  border-color:#1c2a38;
+  border-color:#262626;
 }
 
 html[data-theme='dark'] .muted,
@@ -307,9 +307,9 @@ html[data-theme='dark'] .empty {
 }
 
 html[data-theme='dark'] input {
-  background:#071018;
+  background:#000;
   color:#fff;
-  border-color:#2a3b4b;
+  border-color:#303030;
 }
 
 html[data-theme='dark'] input::placeholder {
@@ -333,9 +333,9 @@ html[data-theme='dark'] .auto,
 html[data-theme='dark'] .secondary,
 html[data-theme='dark'] .sheet-secondary,
 html[data-theme='dark'] .sheet-danger {
-  background:#071018;
+  background:#000;
   color:#fff;
-  border-color:#2a3b4b;
+  border-color:#444;
 }
 
 html[data-theme='dark'] .managed {
@@ -345,7 +345,7 @@ html[data-theme='dark'] .managed {
 
 html[data-theme='dark'] .managed.off {
   color:#777;
-  border-color:#2a3b4b;
+  border-color:#3b3b3b;
 }
 
 html[data-theme='dark'] .trade-row .buy,
@@ -379,7 +379,7 @@ html[data-theme='dark'] .sheet-overlay {
 }
 
 html[data-theme='dark'] .funds-sheet {
-  background:#071018;
+  background:#050505;
   color:#fff;
   box-shadow:0 -12px 40px rgba(0,0,0,.55);
 }
@@ -491,7 +491,7 @@ html[data-theme='dark'] .trade-value b {
 }
 
 html[data-theme='dark'] .pnl-summary {
-  border-color:#1c2a38;
+  border-color:#262626;
 }
 
 html[data-theme='dark'] .pnl-summary-split {
@@ -544,8 +544,8 @@ html[data-theme='dark'] .pnl-summary-split b {
 }
 
 html[data-theme='dark'] .currency-toggle {
-  background:#071018;
-  border-color:#2a3b4b;
+  background:#090909;
+  border-color:#3b3b3b;
   color:#777;
 }
 
@@ -829,9 +829,9 @@ html[data-theme='dark'] .copy-settings input,
 html[data-theme='dark'] .copy-settings select,
 html[data-theme='dark'] .copy-target>input:not([type='checkbox']),
 html[data-theme='dark'] .copy-target select {
-  background:#071018;
+  background:#000;
   color:#fff;
-  border-color:#2a3b4b;
+  border-color:#444;
 }
 html[data-theme='dark'] .copy-open-button.on,
 html[data-theme='dark'] .copy-master.on,
@@ -846,7 +846,7 @@ html[data-theme='dark'] .copy-targets,
 html[data-theme='dark'] .copy-target,
 html[data-theme='dark'] .copy-history,
 html[data-theme='dark'] .copy-history-row {
-  border-color:#1c2a38;
+  border-color:#262626;
 }
 html[data-theme='dark'] .copy-source-head span,
 html[data-theme='dark'] .copy-settings>label,

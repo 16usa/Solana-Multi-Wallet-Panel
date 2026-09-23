@@ -1,0 +1,18 @@
+modules = ["nodejs-24"]
+
+[deployment]
+router = "application"
+deploymentTarget = "reserved-vm"
+build = ["bash", "scripts/build-24x7.sh"]
+run = ["bash", "scripts/run-24x7.sh"]
+
+[workflows]
+runButton = "Project"
+
+[agent]
+stack = "PNPM_WORKSPACE"
+expertMode = true
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 20000

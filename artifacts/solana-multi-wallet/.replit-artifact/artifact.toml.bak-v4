@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Solana Multi Wallet Panel"
+description = "A Solana multi-wallet web panel for reading wallet balances, validating SPL token mints, and preparing wallet-signed Pump.fun or Jupiter swaps without storing private keys."
+version = "1.0.0"
+id = "artifacts/solana-multi-wallet"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25364
+
+[services.development]
+run = "pnpm --filter @workspace/solana-multi-wallet run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/solana-multi-wallet", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/solana-multi-wallet/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25364"
+BASE_PATH = "/"
