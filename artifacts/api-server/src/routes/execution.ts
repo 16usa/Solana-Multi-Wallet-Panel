@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { timingSafeEqual } from "node:crypto";
-import { Keypair, PublicKey } from "@solana/web3.js";
-import { and, desc, eq } from "drizzle-orm";
+import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import {
   db,
   executionStrategiesTable,
@@ -828,6 +828,194 @@ router.post("/execution/trade-all", async (req, res): Promise<void> => {
 });
 
 
+
+const HISTORY_SCAN_LIMIT = 200;
+const HISTORY_TX_BATCH = 25;
+const HISTORY_REQUEST_TYPE = "history";
+
+const historyRpcUrl =
+  process.env.SOLANA_RPC_URL ||
+  process.env.RPC_URL ||
+  "https://api.mainnet-beta.solana.com";
+
+const historyConnection = new Connection(historyRpcUrl, "confirmed");
+
+type HistoricalWithdrawalInsert = {
+  fromAddress: string;
+  toAddress: string;
+  amountSol: number;
+  signature: string;
+  status: "success";
+  requestType: string;
+  maxRequested: boolean;
+  error: null;
+  createdAt: Date;
+};
+
+function withdrawalHistoryKey(item: {
+  signature: string;
+  fromAddress: string;
+  toAddress: string;
+  amountSol: number;
+}) {
+  return [
+    item.signature,
+    item.fromAddress,
+    item.toAddress,
+    Number(item.amountSol).toFixed(9),
+  ].join("|");
+}
+
+async function collectHistoricalWithdrawals(
+  address: string,
+): Promise<HistoricalWithdrawalInsert[]> {
+  const pubkey = new PublicKey(address);
+  const signatureRows: Array<{
+    signature: string;
+    blockTime: number | null;
+  }> = [];
+
+  let before: string | undefined;
+
+  while (signatureRows.length < HISTORY_SCAN_LIMIT) {
+    const page = await historyConnection.getSignaturesForAddress(pubkey, {
+      limit: Math.min(100, HISTORY_SCAN_LIMIT - signatureRows.length),
+      before,
+    });
+
+    if (!page.length) break;
+
+    for (const row of page) {
+      if (!row?.signature || row.err) continue;
+      signatureRows.push({
+        signature: row.signature,
+        blockTime: row.blockTime ?? null,
+      });
+    }
+
+    if (page.length < 100) break;
+    before = page[page.length - 1]?.signature;
+    if (!before) break;
+  }
+
+  const found: HistoricalWithdrawalInsert[] = [];
+  const seen = new Set<string>();
+
+  for (let i = 0; i < signatureRows.length; i += HISTORY_TX_BATCH) {
+    const batch = signatureRows.slice(i, i + HISTORY_TX_BATCH);
+    const parsedTxs = await historyConnection.getParsedTransactions(
+      batch.map((x) => x.signature),
+      {
+        commitment: "confirmed",
+        maxSupportedTransactionVersion: 0,
+      },
+    );
+
+    for (let j = 0; j < batch.length; j++) {
+      const tx = parsedTxs[j];
+      const signature = batch[j]?.signature;
+      const blockTime = batch[j]?.blockTime;
+
+      if (!tx || !signature) continue;
+
+      const createdAt = blockTime
+        ? new Date(blockTime * 1000)
+        : new Date();
+
+      for (const instruction of tx.transaction.message.instructions) {
+        if (!("parsed" in instruction)) continue;
+        if (instruction.program !== "system") continue;
+
+        const parsed = instruction.parsed as any;
+        if (parsed?.type !== "transfer") continue;
+
+        const info = parsed?.info ?? {};
+        const source = typeof info.source === "string" ? info.source : "";
+        const destination =
+          typeof info.destination === "string" ? info.destination : "";
+        const lamports = Number(info.lamports);
+
+        if (source !== address) continue;
+        if (!destination) continue;
+        if (!Number.isFinite(lamports) || lamports <= 0) continue;
+
+        const row: HistoricalWithdrawalInsert = {
+          fromAddress: address,
+          toAddress: destination,
+          amountSol: lamports / 1_000_000_000,
+          signature,
+          status: "success",
+          requestType: HISTORY_REQUEST_TYPE,
+          maxRequested: false,
+          error: null,
+          createdAt,
+        };
+
+        const key = withdrawalHistoryKey(row);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        found.push(row);
+      }
+    }
+  }
+
+  return found;
+}
+
+async function backfillWithdrawalHistory(addresses: string[]) {
+  const uniqueAddresses = [...new Set(addresses.map((x) => x.trim()).filter(Boolean))];
+
+  for (const address of uniqueAddresses) {
+    const historical = await collectHistoricalWithdrawals(address);
+    if (!historical.length) continue;
+
+    const signatures = [...new Set(historical.map((x) => x.signature))];
+    if (!signatures.length) continue;
+
+    const existing = await db
+      .select({
+        signature: executionWithdrawalsTable.signature,
+        fromAddress: executionWithdrawalsTable.fromAddress,
+        toAddress: executionWithdrawalsTable.toAddress,
+        amountSol: executionWithdrawalsTable.amountSol,
+      })
+      .from(executionWithdrawalsTable)
+      .where(
+        and(
+          eq(executionWithdrawalsTable.fromAddress, address),
+          inArray(executionWithdrawalsTable.signature, signatures),
+        ),
+      );
+
+    const existingKeys = new Set(
+      existing
+        .filter(
+          (row) =>
+            Boolean(row.signature) &&
+            Boolean(row.toAddress) &&
+            row.amountSol != null,
+        )
+        .map((row) =>
+          withdrawalHistoryKey({
+            signature: row.signature as string,
+            fromAddress: row.fromAddress,
+            toAddress: row.toAddress,
+            amountSol: Number(row.amountSol),
+          }),
+        ),
+    );
+
+    const toInsert = historical.filter(
+      (row) => !existingKeys.has(withdrawalHistoryKey(row)),
+    );
+
+    if (!toInsert.length) continue;
+
+    await db.insert(executionWithdrawalsTable).values(toInsert);
+  }
+}
+
+
 router.get("/execution/withdrawals", async (req, res): Promise<void> => {
   const address =
     typeof req.query.address === "string"
@@ -849,6 +1037,25 @@ router.get("/execution/withdrawals", async (req, res): Promise<void> => {
     : 30;
 
   try {
+    const targetAddresses = address
+      ? [address]
+      : (
+          await db
+            .select({ address: executionWalletsTable.address })
+            .from(executionWalletsTable)
+        ).map((row) => row.address);
+
+    if (targetAddresses.length) {
+      try {
+        await backfillWithdrawalHistory(targetAddresses);
+      } catch (backfillError) {
+        req.log.error(
+          { err: backfillError, address, targetAddresses },
+          "Withdrawal history backfill failed",
+        );
+      }
+    }
+
     const selection = {
       id: executionWithdrawalsTable.id,
       fromAddress: executionWithdrawalsTable.fromAddress,
