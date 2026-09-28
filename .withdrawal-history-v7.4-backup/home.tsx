@@ -50,19 +50,6 @@ type PnlSummary = {
   totalInvestedSol: number;
 };
 
-type WithdrawalHistoryItem = {
-  id: string;
-  fromAddress: string;
-  toAddress: string;
-  amountSol: number | null;
-  signature?: string | null;
-  status: string;
-  requestType: 'single' | 'all' | string;
-  maxRequested: boolean;
-  error?: string | null;
-  createdAt: string;
-};
-
 
 type CopyTarget = {
   id: string;
@@ -194,9 +181,6 @@ export default function Home() {
   );
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawMax, setWithdrawMax] = useState(false);
-  const [withdrawHistory, setWithdrawHistory] = useState<WithdrawalHistoryItem[]>([]);
-  const [withdrawHistoryLoading, setWithdrawHistoryLoading] = useState(false);
-  const [withdrawHistoryError, setWithdrawHistoryError] = useState('');
 
 
   const [copyOpen, setCopyOpen] = useState(false);
@@ -225,31 +209,6 @@ export default function Home() {
 
     return data;
   }, [token]);
-
-  const refreshWithdrawalHistory = useCallback(async (address?: string) => {
-    if (!unlocked || !token) return;
-
-    setWithdrawHistoryLoading(true);
-    setWithdrawHistoryError('');
-
-    try {
-      const params = new URLSearchParams({ limit: '30' });
-      if (address) params.set('address', address);
-
-      const data = await api(
-        `/api/execution/withdrawals?${params.toString()}`,
-      );
-
-      setWithdrawHistory(data.history || []);
-    } catch (error) {
-      setWithdrawHistory([]);
-      setWithdrawHistoryError(
-        error instanceof Error ? error.message : String(error),
-      );
-    } finally {
-      setWithdrawHistoryLoading(false);
-    }
-  }, [api, token, unlocked]);
 
   const refreshCopyTrading = useCallback(async () => {
     if (!unlocked || !token) return;
@@ -430,18 +389,6 @@ export default function Home() {
     }
 
     return `${signed && solValue > 0 ? '+' : ''}${solValue.toFixed(4)} SOL`;
-  }
-
-  function withdrawalTimeText(value: string) {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '—';
-
-    return date.toLocaleString(undefined, {
-      month: 'short',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
   }
 
   function tokenPriceText(
@@ -791,10 +738,7 @@ export default function Home() {
     );
     setWithdrawAmount('');
     setWithdrawMax(false);
-    setWithdrawHistory([]);
-    setWithdrawHistoryError('');
     setNotice('');
-    void refreshWithdrawalHistory(wallet.address);
   }
 
   function openGlobalFunds() {
@@ -805,10 +749,7 @@ export default function Home() {
     );
     setWithdrawAmount('');
     setWithdrawMax(false);
-    setWithdrawHistory([]);
-    setWithdrawHistoryError('');
     setNotice('');
-    void refreshWithdrawalHistory();
   }
 
   function closeFunds() {
@@ -816,8 +757,6 @@ export default function Home() {
     setFundsOpen(false);
     setWithdrawAmount('');
     setWithdrawMax(false);
-    setWithdrawHistory([]);
-    setWithdrawHistoryError('');
   }
 
   function saveWithdrawalAddress() {
@@ -883,13 +822,10 @@ export default function Home() {
       setNotice(
         `Withdrawal confirmed · ${moneyText(data.amountSol)} · ${data.signature}`,
       );
-      setWithdrawAmount('');
-      setWithdrawMax(false);
+      closeFunds();
       await refresh();
-      await refreshWithdrawalHistory(wallet.address);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
-      void refreshWithdrawalHistory(wallet.address);
     } finally {
       setBusy('');
     }
@@ -922,8 +858,8 @@ export default function Home() {
       const failed = (data.results || []).length - ok;
 
       setNotice(`Withdraw all finished · ${ok} success · ${failed} failed`);
+      closeFunds();
       await refresh();
-      await refreshWithdrawalHistory();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
     } finally {
@@ -2315,97 +2251,6 @@ export default function Home() {
                 MAX leaves a small SOL reserve for the network fee. Disable
                 AUTO before draining a wallet.
               </p>
-
-              <div className="withdraw-history">
-                <div className="withdraw-history-head">
-                  <strong>WITHDRAWAL HISTORY</strong>
-                  <span>
-                    {menuWallet ? short(menuWallet.address) : 'ALL WALLETS'}
-                  </span>
-                </div>
-
-                {withdrawHistoryLoading && (
-                  <div className="withdraw-history-empty">LOADING…</div>
-                )}
-
-                {!withdrawHistoryLoading && withdrawHistoryError && (
-                  <div className="withdraw-history-error">
-                    {withdrawHistoryError}
-                  </div>
-                )}
-
-                {!withdrawHistoryLoading &&
-                  !withdrawHistoryError &&
-                  withdrawHistory.length === 0 && (
-                    <div className="withdraw-history-empty">
-                      No recorded withdrawals yet.
-                    </div>
-                  )}
-
-                {!withdrawHistoryLoading &&
-                  !withdrawHistoryError &&
-                  withdrawHistory.map((item) => (
-                    <div className="withdraw-history-row" key={item.id}>
-                      <div className="withdraw-history-top">
-                        <strong>
-                          {item.amountSol == null
-                            ? '—'
-                            : `${numberText(item.amountSol, 6)} SOL`}
-                          {item.maxRequested ? ' · MAX' : ''}
-                        </strong>
-                        <b
-                          className={
-                            item.status === 'success'
-                              ? 'success'
-                              : 'failed'
-                          }
-                        >
-                          {item.status.toUpperCase()}
-                        </b>
-                      </div>
-
-                      <div
-                        className="withdraw-history-route"
-                        title={`${item.fromAddress} → ${item.toAddress}`}
-                      >
-                        <span>
-                          FROM {short(item.fromAddress)} → TO{' '}
-                          {short(item.toAddress)}
-                        </span>
-                        <time>{withdrawalTimeText(item.createdAt)}</time>
-                      </div>
-
-                      <div className="withdraw-history-meta">
-                        <span>
-                          {item.requestType === 'all'
-                            ? 'WITHDRAW ALL'
-                            : 'WITHDRAW'}
-                        </span>
-
-                        {item.signature && (
-                          <button
-                            onClick={() =>
-                              window.open(
-                                `https://solscan.io/tx/${item.signature}`,
-                                '_blank',
-                                'noopener,noreferrer',
-                              )
-                            }
-                            title={item.signature}
-                          >
-                            TX {short(item.signature)} ↗
-                          </button>
-                        )}
-                      </div>
-
-                      {item.error && (
-                        <div className="withdraw-history-row-error">
-                          {item.error}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-              </div>
             </div>
           </div>
         )}

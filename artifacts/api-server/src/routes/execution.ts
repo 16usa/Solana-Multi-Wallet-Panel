@@ -1,11 +1,12 @@
 import { Router, type IRouter } from "express";
 import { timingSafeEqual } from "node:crypto";
 import { Keypair, PublicKey } from "@solana/web3.js";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import {
   db,
   executionStrategiesTable,
   executionWalletsTable,
+  executionWithdrawalsTable,
 } from "@workspace/db";
 import { encryptSecret, decryptSecret } from "../lib/execution-vault";
 import {
@@ -827,6 +828,60 @@ router.post("/execution/trade-all", async (req, res): Promise<void> => {
 });
 
 
+router.get("/execution/withdrawals", async (req, res): Promise<void> => {
+  const address =
+    typeof req.query.address === "string"
+      ? req.query.address.trim()
+      : "";
+
+  if (address) {
+    try {
+      new PublicKey(address);
+    } catch {
+      res.status(400).json({ error: "Invalid Solana address" });
+      return;
+    }
+  }
+
+  const rawLimit = Number(req.query.limit ?? 30);
+  const limit = Number.isFinite(rawLimit)
+    ? Math.max(1, Math.min(100, Math.floor(rawLimit)))
+    : 30;
+
+  try {
+    const selection = {
+      id: executionWithdrawalsTable.id,
+      fromAddress: executionWithdrawalsTable.fromAddress,
+      toAddress: executionWithdrawalsTable.toAddress,
+      amountSol: executionWithdrawalsTable.amountSol,
+      signature: executionWithdrawalsTable.signature,
+      status: executionWithdrawalsTable.status,
+      requestType: executionWithdrawalsTable.requestType,
+      maxRequested: executionWithdrawalsTable.maxRequested,
+      error: executionWithdrawalsTable.error,
+      createdAt: executionWithdrawalsTable.createdAt,
+    };
+
+    const history = address
+      ? await db
+          .select(selection)
+          .from(executionWithdrawalsTable)
+          .where(eq(executionWithdrawalsTable.fromAddress, address))
+          .orderBy(desc(executionWithdrawalsTable.createdAt))
+          .limit(limit)
+      : await db
+          .select(selection)
+          .from(executionWithdrawalsTable)
+          .orderBy(desc(executionWithdrawalsTable.createdAt))
+          .limit(limit);
+
+    res.json({ history });
+  } catch (error) {
+    req.log.error({ err: error }, "Withdrawal history lookup failed");
+    res.status(500).json({ error: "Could not load withdrawal history" });
+  }
+});
+
 router.post("/execution/withdraw", async (req, res): Promise<void> => {
   const { address, to, amountSol, max } = req.body ?? {};
 
@@ -885,6 +940,24 @@ router.post("/execution/withdraw", async (req, res): Promise<void> => {
       max,
     );
 
+    try {
+      await db.insert(executionWithdrawalsTable).values({
+        fromAddress: address,
+        toAddress: to,
+        amountSol: result.amountSol,
+        signature: result.signature,
+        status: "success",
+        requestType: "single",
+        maxRequested: max,
+        error: null,
+      });
+    } catch (historyError) {
+      req.log.error(
+        { err: historyError, signature: result.signature },
+        "Withdrawal succeeded but history write failed",
+      );
+    }
+
     res.json({
       status: "success",
       address,
@@ -892,12 +965,38 @@ router.post("/execution/withdraw", async (req, res): Promise<void> => {
       ...result,
     });
   } catch (error) {
+    const errorMessage =
+      error instanceof Error
+        ? error.message
+        : "Withdrawal failed";
+
     req.log.error({ err: error }, "Managed withdrawal failed");
+
+    try {
+      const requestedAmount = Number(amountSol);
+
+      await db.insert(executionWithdrawalsTable).values({
+        fromAddress: address,
+        toAddress: to,
+        amountSol:
+          !max && Number.isFinite(requestedAmount)
+            ? requestedAmount
+            : null,
+        signature: null,
+        status: "failed",
+        requestType: "single",
+        maxRequested: max,
+        error: errorMessage,
+      });
+    } catch (historyError) {
+      req.log.error(
+        { err: historyError },
+        "Failed withdrawal history write failed",
+      );
+    }
+
     res.status(422).json({
-      error:
-        error instanceof Error
-          ? error.message
-          : "Withdrawal failed",
+      error: errorMessage,
     });
   }
 });
@@ -957,6 +1056,24 @@ router.post("/execution/withdraw-all", async (req, res): Promise<void> => {
         true,
       );
 
+      try {
+        await db.insert(executionWithdrawalsTable).values({
+          fromAddress: wallet.address,
+          toAddress: to,
+          amountSol: result.amountSol,
+          signature: result.signature,
+          status: "success",
+          requestType: "all",
+          maxRequested: true,
+          error: null,
+        });
+      } catch (historyError) {
+        req.log.error(
+          { err: historyError, signature: result.signature },
+          "Withdraw-all succeeded but history write failed",
+        );
+      }
+
       results.push({
         address: wallet.address,
         ok: true,
@@ -964,13 +1081,33 @@ router.post("/execution/withdraw-all", async (req, res): Promise<void> => {
         amountSol: result.amountSol,
       });
     } catch (error) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : String(error);
+
+      try {
+        await db.insert(executionWithdrawalsTable).values({
+          fromAddress: wallet.address,
+          toAddress: to,
+          amountSol: null,
+          signature: null,
+          status: "failed",
+          requestType: "all",
+          maxRequested: true,
+          error: errorMessage,
+        });
+      } catch (historyError) {
+        req.log.error(
+          { err: historyError },
+          "Failed withdraw-all history write failed",
+        );
+      }
+
       results.push({
         address: wallet.address,
         ok: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : String(error),
+        error: errorMessage,
       });
     }
   }

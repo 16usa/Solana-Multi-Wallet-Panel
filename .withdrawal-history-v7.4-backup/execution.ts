@@ -55,24 +55,5 @@ export const executionStrategiesTable = pgTable(
   }),
 );
 
-export const executionWithdrawalsTable = pgTable(
-  "execution_withdrawals",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    fromAddress: text("from_address").notNull(),
-    toAddress: text("to_address").notNull(),
-    amountSol: doublePrecision("amount_sol"),
-    signature: text("signature"),
-    status: text("status").notNull(),
-    requestType: text("request_type").notNull().default("single"),
-    maxRequested: boolean("max_requested").notNull().default(false),
-    error: text("error"),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-);
-
 export type ExecutionWallet = typeof executionWalletsTable.$inferSelect;
 export type ExecutionStrategy = typeof executionStrategiesTable.$inferSelect;
-export type ExecutionWithdrawal = typeof executionWithdrawalsTable.$inferSelect;
